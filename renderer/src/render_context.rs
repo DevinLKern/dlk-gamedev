@@ -188,15 +188,48 @@ impl RenderContext {
                     device.clone(),
                     String::from("shaders/compiled/shader.vert.spv"),
                 )
-            }?;
+            }.inspect_err(|e| {
+                trace_error!(e);
+                unsafe {
+                    for (pool, buffer) in command_infos.iter() {
+                        device.free_command_buffers(*pool, &[*buffer]);
+                        device.destroy_command_pool(*pool);
+                    }
+                    for semaphore in image_acquired.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for semaphore in render_complete.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for fence in command_buffer_executed.iter() {
+                        device.destroy_fence(*fence);
+                    }
+                }
+            })?;
             let (spv_frag_shader_module, vk_frag_shader_module) = unsafe {
                 vulkan::pipeline::create_shader_modules(
                     device.clone(),
                     String::from("shaders/compiled/shader.frag.spv"),
                 )
             }
-            .inspect_err(|_| {
-                unsafe { device.destroy_shader_module(vk_vertex_shader_module) };
+            .inspect_err(|e| {
+                trace_error!(e);
+                unsafe {
+                    device.destroy_shader_module(vk_vertex_shader_module);
+                    for (pool, buffer) in command_infos.iter() {
+                        device.free_command_buffers(*pool, &[*buffer]);
+                        device.destroy_command_pool(*pool);
+                    }
+                    for semaphore in image_acquired.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for semaphore in render_complete.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for fence in command_buffer_executed.iter() {
+                        device.destroy_fence(*fence);
+                    }
+                }
             })?;
             let color_formats = Rc::new([swapchain.get_format()]);
             let pipeline_create_info = vulkan::pipeline::PipelineCreateInfo::Graphics {
@@ -208,14 +241,34 @@ impl RenderContext {
                 depth_format: depth_stencil_format,
                 stencil_format: depth_stencil_format,
             };
-            let pipeline = vulkan::pipeline::Pipeline::new(device.clone(), &pipeline_create_info);
+            let pipeline = vulkan::pipeline::Pipeline::new(device.clone(), &pipeline_create_info)
+                .inspect_err(|e| {
+                    trace_error!(e);
+                    unsafe {
+                        device.destroy_shader_module(vk_frag_shader_module);
+                        device.destroy_shader_module(vk_vertex_shader_module);
+                        for (pool, buffer) in command_infos.iter() {
+                            device.free_command_buffers(*pool, &[*buffer]);
+                            device.destroy_command_pool(*pool);
+                        }
+                        for semaphore in image_acquired.iter() {
+                            device.destroy_semaphore(*semaphore);
+                        }
+                        for semaphore in render_complete.iter() {
+                            device.destroy_semaphore(*semaphore);
+                        }
+                        for fence in command_buffer_executed.iter() {
+                            device.destroy_fence(*fence);
+                        }
+                    }
+                })?;
 
             unsafe {
                 device.destroy_shader_module(vk_vertex_shader_module);
                 device.destroy_shader_module(vk_frag_shader_module);
             }
 
-            Rc::new(pipeline?)
+            Rc::new(pipeline)
         };
         Ok(RenderContext {
             device,
