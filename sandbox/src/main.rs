@@ -85,7 +85,7 @@ impl Application {
                 )
             };
 
-            renderer::create_index_buffer(device.clone(), data, ash::vk::IndexType::UINT32, 3, 0)?
+            renderer::create_index_buffer(device.clone(), data, vk::IndexType::UINT32, 3, 0)?
         };
 
         Ok(Self {

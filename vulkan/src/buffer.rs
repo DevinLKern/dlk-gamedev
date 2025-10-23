@@ -146,7 +146,7 @@ impl BufferView {
 
     pub unsafe fn draw(&self, command_buffer: vk::CommandBuffer) {
         match self {
-            Self::Index { buffer, index_count, instance_count, first_index, index_type } => {
+            Self::Index { buffer, index_count, instance_count, first_index, .. } => {
                 unsafe { buffer.device.cmd_draw_indexed(command_buffer, *index_count, *instance_count, *first_index, 0, 0); }
             }
             _ => todo!()

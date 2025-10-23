@@ -134,6 +134,7 @@ pub struct UniformInfo {
     pub name: Option<Rc<str>>,
 }
 
+#[allow(dead_code)]
 pub struct ShaderModule {
     version: u32,
     generator: u32,
