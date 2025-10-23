@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "core",
+    "renderer",
+    "spirv",
+    "sandbox",
+    "types",
+]
+
+resolver = "3"
