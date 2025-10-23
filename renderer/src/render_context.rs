@@ -18,7 +18,7 @@ pub struct RenderContext {
 impl RenderContext {
     pub fn new(
         device: Rc<vulkan::device::Device>,
-        window: &winit::window::Window
+        window: &winit::window::Window,
     ) -> vulkan::result::Result<RenderContext> {
         let swapchain = vulkan::swapchain::Swapchain::new(device.clone(), window)
             .inspect_err(|e| trace_error!(e))?;
@@ -183,19 +183,21 @@ impl RenderContext {
         };
 
         let pipeline = {
-            let (spv_vertex_shader_module, vk_vertex_shader_module) =
-                unsafe { vulkan::pipeline::create_shader_modules(
+            let (spv_vertex_shader_module, vk_vertex_shader_module) = unsafe {
+                vulkan::pipeline::create_shader_modules(
                     device.clone(),
-                    String::from("shaders/compiled/shader.vert.spv")
-                )}?;
-            let (spv_frag_shader_module, vk_frag_shader_module) =
-                unsafe { vulkan::pipeline::create_shader_modules(
+                    String::from("shaders/compiled/shader.vert.spv"),
+                )
+            }?;
+            let (spv_frag_shader_module, vk_frag_shader_module) = unsafe {
+                vulkan::pipeline::create_shader_modules(
                     device.clone(),
-                    String::from("shaders/compiled/shader.frag.spv")
-                )}
-                .inspect_err(|_| {
-                    unsafe { device.destroy_shader_module(vk_vertex_shader_module) };
-                })?;
+                    String::from("shaders/compiled/shader.frag.spv"),
+                )
+            }
+            .inspect_err(|_| {
+                unsafe { device.destroy_shader_module(vk_vertex_shader_module) };
+            })?;
             let color_formats = Rc::new([swapchain.get_format()]);
             let pipeline_create_info = vulkan::pipeline::PipelineCreateInfo::Graphics {
                 vk_vertex_shader_module,
@@ -206,10 +208,7 @@ impl RenderContext {
                 depth_format: depth_stencil_format,
                 stencil_format: depth_stencil_format,
             };
-            let pipeline = vulkan::pipeline::Pipeline::new(
-                device.clone(),
-                &pipeline_create_info
-            );
+            let pipeline = vulkan::pipeline::Pipeline::new(device.clone(), &pipeline_create_info);
 
             unsafe {
                 device.destroy_shader_module(vk_vertex_shader_module);
@@ -255,11 +254,9 @@ impl Drop for RenderContext {
 }
 
 impl RenderContext {
-    pub unsafe fn draw<F>(
-        &mut self,
-        record_draw_commands: F
-    ) -> vulkan::result::Result<()>
-    where F: FnOnce(vk::CommandBuffer)
+    pub unsafe fn draw<F>(&mut self, record_draw_commands: F) -> vulkan::result::Result<()>
+    where
+        F: FnOnce(vk::CommandBuffer),
     {
         // Acquire image
         let (swapchain_image_index, swapchain_image_view) = {
@@ -396,17 +393,18 @@ impl RenderContext {
                 width: self.swapchain.get_extent().width as f32,
                 height: self.swapchain.get_extent().height as f32,
                 min_depth: 0.0,
-                max_depth: 1.0
+                max_depth: 1.0,
             };
             let scissor = vk::Rect2D {
                 offset: vk::Offset2D { x: 0, y: 0 },
-                extent: *self.swapchain.get_extent()
+                extent: *self.swapchain.get_extent(),
             };
             unsafe {
                 self.device
                     .cmd_begin_rendering(*command_buffer, &rendering_info);
 
-                self.device.cmd_set_viewport(*command_buffer, 0, &[viewport]);
+                self.device
+                    .cmd_set_viewport(*command_buffer, 0, &[viewport]);
                 self.device.cmd_set_scissor(*command_buffer, 0, &[scissor]);
 
                 self.pipeline.bind(*command_buffer);

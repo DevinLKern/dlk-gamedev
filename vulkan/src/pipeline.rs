@@ -4,9 +4,8 @@ use ash::prelude::VkResult;
 use ash::vk;
 use spirv;
 use std::collections::HashMap;
-use std::rc::Rc;
 use std::io::Read;
-
+use std::rc::Rc;
 
 fn spirv_type_to_vk_format(spirv_type: &spirv::ShaderIoType) -> vk::Format {
     match spirv_type {
@@ -75,7 +74,7 @@ pub unsafe fn create_shader_modules(
 
         let _ = file.read_to_end(&mut data)?;
 
-        data 
+        data
     };
 
     let spv_module = spirv::ShaderModule::from_code(shader_code.as_slice())?;
@@ -113,7 +112,7 @@ impl DescriptorSetLayout {
     pub(crate) fn new(
         device: Rc<crate::device::Device>,
         binding_names: &[(Rc<str>, u32)],
-        bindings: &[vk::DescriptorSetLayoutBinding<'_>]
+        bindings: &[vk::DescriptorSetLayoutBinding<'_>],
     ) -> VkResult<DescriptorSetLayout> {
         let descriptor_set_layout = {
             let create_info = vk::DescriptorSetLayoutCreateInfo {
@@ -125,7 +124,7 @@ impl DescriptorSetLayout {
             unsafe { device.create_descriptor_set_layout(&create_info)? }
         };
 
-        let owned_bindings: Box<[OwnedDescriptorSetLayoutBinding]>  = bindings
+        let owned_bindings: Box<[OwnedDescriptorSetLayoutBinding]> = bindings
             .iter()
             .map(|b| OwnedDescriptorSetLayoutBinding {
                 binding: b.binding,
@@ -133,30 +132,25 @@ impl DescriptorSetLayout {
                 descriptor_count: b.descriptor_count,
                 stage_flags: b.stage_flags,
                 p_immutable_shader: b.p_immutable_samplers,
-            }).collect();
+            })
+            .collect();
 
         let mut name_to_binding = HashMap::<Rc<str>, usize>::new();
         for (name, binding) in binding_names.iter() {
             let index = owned_bindings
                 .iter()
                 .enumerate()
-                .find_map(|(i, b)| {
-                    if b.binding == *binding {
-                        Some(i)
-                    } else {
-                        None
-                    }
-                });
+                .find_map(|(i, b)| if b.binding == *binding { Some(i) } else { None });
             if let Some(i) = index {
                 name_to_binding.insert(name.clone(), i);
             }
         }
 
-        Ok(DescriptorSetLayout{
+        Ok(DescriptorSetLayout {
             device,
             name_to_binding,
             bindings: owned_bindings,
-            handle: descriptor_set_layout
+            handle: descriptor_set_layout,
         })
     }
 }
@@ -266,24 +260,25 @@ impl<'a> PipelineLayout {
 
         let mut set_layouts = Vec::new();
         for (set, bindings) in set_bindings.into_iter() {
-            let binding_names: Box<[(Rc<str>, u32)]> = set_names.iter().filter_map(|(n, (s, b))| {
-                if *s == set {
-                    Some((n.clone(), *b))
-                } else {
-                    None
-                }
-            }).collect();
-            let set_layout = DescriptorSetLayout::new(
-                device.clone(),
-                &binding_names,
-                bindings.as_slice()
-            )?;
+            let binding_names: Box<[(Rc<str>, u32)]> = set_names
+                .iter()
+                .filter_map(|(n, (s, b))| {
+                    if *s == set {
+                        Some((n.clone(), *b))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            let set_layout =
+                DescriptorSetLayout::new(device.clone(), &binding_names, bindings.as_slice())?;
 
             set_layouts.push(set_layout);
         }
 
         let pipeline_layout = {
-            let layouts: Box<[vk::DescriptorSetLayout]> = set_layouts.iter().map(|l| l.handle).collect();
+            let layouts: Box<[vk::DescriptorSetLayout]> =
+                set_layouts.iter().map(|l| l.handle).collect();
             let pipeline_layout_ceate_info = vk::PipelineLayoutCreateInfo {
                 set_layout_count: layouts.len() as u32,
                 p_set_layouts: layouts.as_ptr(),
@@ -296,7 +291,7 @@ impl<'a> PipelineLayout {
         Ok(PipelineLayout {
             device,
             set_layouts: set_layouts.into_boxed_slice(),
-            handle: pipeline_layout
+            handle: pipeline_layout,
         })
     }
 }
@@ -343,9 +338,12 @@ impl Pipeline {
                 depth_format,
                 stencil_format,
             } => {
-                let pipeline_layout =
-                    PipelineLayout::new(device.clone(), &spv_vertex_shader_module, &spv_frag_shader_module)
-                        .inspect_err(|e| trace_error!(e))?;
+                let pipeline_layout = PipelineLayout::new(
+                    device.clone(),
+                    &spv_vertex_shader_module,
+                    &spv_frag_shader_module,
+                )
+                .inspect_err(|e| trace_error!(e))?;
 
                 let pipeline = {
                     let vert_entry_point_name = spv_vertex_shader_module
@@ -358,9 +356,7 @@ impl Pipeline {
                                 None
                             }
                         })
-                        .ok_or_else(|| {
-                            Error::CouldNotDetermineEntryPointName
-                        })
+                        .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
                         .inspect_err(|e| trace_error!(e))?;
                     let frag_entry_point_name = spv_frag_shader_module
                         .get_input_names()
@@ -372,9 +368,7 @@ impl Pipeline {
                                 None
                             }
                         })
-                        .ok_or_else(|| {
-                            Error::CouldNotDetermineEntryPointName
-                        })
+                        .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
                         .inspect_err(|e| trace_error!(e))?;
                     let stages = {
                         let vert_stage = vk::PipelineShaderStageCreateInfo {
@@ -408,16 +402,22 @@ impl Pipeline {
 
                         // sort inputs by location and then by binding
                         vk_input_attributes.sort_by(|a, b| {
-                            a.binding.cmp(&b.binding).then_with(|| a.location.cmp(&b.location))
+                            a.binding
+                                .cmp(&b.binding)
+                                .then_with(|| a.location.cmp(&b.location))
                         });
                         inputs.sort_by(|a, b| {
-                            a.binding.cmp(&b.binding).then_with(|| a.location.cmp(&b.location))
+                            a.binding
+                                .cmp(&b.binding)
+                                .then_with(|| a.location.cmp(&b.location))
                         });
 
                         let mut vk_binding_descriptions = Vec::new();
                         let (mut l, mut r): (usize, usize) = (0, 0);
                         while r < vk_input_attributes.len() {
-                            while r < vk_input_attributes.len() && vk_input_attributes[l].binding == vk_input_attributes[r].binding {
+                            while r < vk_input_attributes.len()
+                                && vk_input_attributes[l].binding == vk_input_attributes[r].binding
+                            {
                                 r += 1;
                             }
 
@@ -427,10 +427,10 @@ impl Pipeline {
                                 stride += inputs[i].stride;
                             }
 
-                            vk_binding_descriptions.push(vk::VertexInputBindingDescription{
+                            vk_binding_descriptions.push(vk::VertexInputBindingDescription {
                                 binding: vk_input_attributes[l].binding,
                                 stride,
-                                input_rate: vk::VertexInputRate::VERTEX
+                                input_rate: vk::VertexInputRate::VERTEX,
                             });
 
                             l = r;
@@ -564,14 +564,18 @@ impl Pipeline {
     }
 
     pub unsafe fn bind(&self, command_buffer: vk::CommandBuffer) {
-        unsafe { self.device.cmd_bind_pipeline(command_buffer, vk::PipelineBindPoint::GRAPHICS, self.pipeline) }
+        unsafe {
+            self.device.cmd_bind_pipeline(
+                command_buffer,
+                vk::PipelineBindPoint::GRAPHICS,
+                self.pipeline,
+            )
+        }
     }
 }
 
-impl Drop for Pipeline{
+impl Drop for Pipeline {
     fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_pipeline(self.pipeline)
-        }
+        unsafe { self.device.destroy_pipeline(self.pipeline) }
     }
 }

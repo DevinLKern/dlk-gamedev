@@ -103,7 +103,6 @@ impl Buffer {
     pub unsafe fn unmap(&self) {
         unsafe { self.device.unmap_memory(self.memory) }
     }
-
 }
 
 impl Drop for Buffer {
@@ -135,21 +134,40 @@ pub enum BufferView {
 impl BufferView {
     pub unsafe fn bind(&self, command_buffer: vk::CommandBuffer) {
         match self {
-            Self::Vertex { buffer, .. } => {
-                unsafe { buffer.device.cmd_bind_vertex_buffers(command_buffer, 0, &[buffer.handle], &[0]) }
-            }
-            Self::Index { buffer, index_type, .. } => {
-                unsafe { buffer.device.cmd_bind_index_buffers(command_buffer, buffer.handle, 0, *index_type) }
-            }
+            Self::Vertex { buffer, .. } => unsafe {
+                buffer
+                    .device
+                    .cmd_bind_vertex_buffers(command_buffer, 0, &[buffer.handle], &[0])
+            },
+            Self::Index {
+                buffer, index_type, ..
+            } => unsafe {
+                buffer
+                    .device
+                    .cmd_bind_index_buffers(command_buffer, buffer.handle, 0, *index_type)
+            },
         }
     }
 
     pub unsafe fn draw(&self, command_buffer: vk::CommandBuffer) {
         match self {
-            Self::Index { buffer, index_count, instance_count, first_index, .. } => {
-                unsafe { buffer.device.cmd_draw_indexed(command_buffer, *index_count, *instance_count, *first_index, 0, 0); }
-            }
-            _ => todo!()
+            Self::Index {
+                buffer,
+                index_count,
+                instance_count,
+                first_index,
+                ..
+            } => unsafe {
+                buffer.device.cmd_draw_indexed(
+                    command_buffer,
+                    *index_count,
+                    *instance_count,
+                    *first_index,
+                    0,
+                    0,
+                );
+            },
+            _ => todo!(),
         }
     }
 }

@@ -56,9 +56,20 @@ pub enum ShaderIoType {
 
 fn get_shader_io_type_size(io_type: &ShaderIoType) -> u32 {
     match io_type {
-        ShaderIoType::Scalar { component_width, .. } => component_width / 8,
-        ShaderIoType::Vector { component_width, component_count, .. } => component_width * component_count / 8,
-        ShaderIoType::Matrix { component_width, cols, rows, .. } => component_width * cols * rows / 8
+        ShaderIoType::Scalar {
+            component_width, ..
+        } => component_width / 8,
+        ShaderIoType::Vector {
+            component_width,
+            component_count,
+            ..
+        } => component_width * component_count / 8,
+        ShaderIoType::Matrix {
+            component_width,
+            cols,
+            rows,
+            ..
+        } => component_width * cols * rows / 8,
     }
 }
 
@@ -654,7 +665,7 @@ impl ShaderModule {
                     &OpTypeInfo::Pointer { type_id, .. } => {
                         input_ids.push((*id, type_id));
                     }
-                    _ => continue
+                    _ => continue,
                 }
             }
         }
@@ -672,7 +683,7 @@ impl ShaderModule {
                 }
             }
             let location = location.ok_or(Error::LocationMissing(*id))?;
-            
+
             let mut binding: Option<u32> = None;
             for decorate_info in self.decorations.get(id).unwrap().iter() {
                 // 33 = Binding
@@ -691,7 +702,7 @@ impl ShaderModule {
                 location,
                 io_type,
                 stride,
-                name
+                name,
             });
         }
 

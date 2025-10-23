@@ -125,12 +125,10 @@ impl Application {
                 println!("Redraw requested!");
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
-                let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| {
-                    unsafe {
-                        vertex_buffer.bind(command_buffer);
-                        index_buffer.bind(command_buffer);
-                        index_buffer.draw(command_buffer);
-                    }
+                let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
+                    vertex_buffer.bind(command_buffer);
+                    index_buffer.bind(command_buffer);
+                    index_buffer.draw(command_buffer);
                 };
                 unsafe {
                     context.draw(record_draw_commands)?;
@@ -175,10 +173,7 @@ impl ApplicationHandler for Application {
         };
         let window_id = window.id();
         let context =
-            match renderer::render_context::RenderContext::new(
-                self.device.clone(),
-                &window
-            ) {
+            match renderer::render_context::RenderContext::new(self.device.clone(), &window) {
                 Ok(context) => context,
                 Err(e) => {
                     trace_error!(e);

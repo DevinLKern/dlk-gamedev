@@ -632,7 +632,8 @@ impl Device {
     #[inline]
     pub(crate) unsafe fn destroy_pipeline(&self, pipeline: vk::Pipeline) {
         unsafe {
-            self.device.destroy_pipeline(pipeline, self.get_alloc_callbacks())
+            self.device
+                .destroy_pipeline(pipeline, self.get_alloc_callbacks())
         }
     }
 
@@ -889,33 +890,92 @@ impl Device {
     }
 
     #[inline]
-    pub(crate) unsafe fn cmd_bind_pipeline(&self, command_buffer: vk::CommandBuffer, pipeline_bind_point: vk::PipelineBindPoint, pipeline: vk::Pipeline) {
-        unsafe { self.device.cmd_bind_pipeline(command_buffer, pipeline_bind_point, pipeline) }
+    pub(crate) unsafe fn cmd_bind_pipeline(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        pipeline_bind_point: vk::PipelineBindPoint,
+        pipeline: vk::Pipeline,
+    ) {
+        unsafe {
+            self.device
+                .cmd_bind_pipeline(command_buffer, pipeline_bind_point, pipeline)
+        }
     }
 
     #[inline]
-    pub unsafe fn cmd_set_viewport(&self, command_buffer: vk::CommandBuffer, first_viewport: u32, viewports: &[vk::Viewport]) {
-        unsafe { self.device.cmd_set_viewport(command_buffer, first_viewport, viewports) }
+    pub unsafe fn cmd_set_viewport(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        first_viewport: u32,
+        viewports: &[vk::Viewport],
+    ) {
+        unsafe {
+            self.device
+                .cmd_set_viewport(command_buffer, first_viewport, viewports)
+        }
     }
 
     #[inline]
-    pub unsafe  fn cmd_set_scissor(&self, command_buffer: vk::CommandBuffer, first_scissor: u32, scissors: &[vk::Rect2D]) {
-        unsafe { self.device.cmd_set_scissor(command_buffer, first_scissor, scissors) }
+    pub unsafe fn cmd_set_scissor(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        first_scissor: u32,
+        scissors: &[vk::Rect2D],
+    ) {
+        unsafe {
+            self.device
+                .cmd_set_scissor(command_buffer, first_scissor, scissors)
+        }
     }
 
     #[inline]
-    pub(crate) unsafe fn cmd_bind_vertex_buffers(&self, command_buffer: vk::CommandBuffer, first_binding: u32, buffers: &[vk::Buffer], offsets: &[vk::DeviceSize]) {
-        unsafe { self.device.cmd_bind_vertex_buffers(command_buffer, first_binding, buffers, offsets) }
+    pub(crate) unsafe fn cmd_bind_vertex_buffers(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        first_binding: u32,
+        buffers: &[vk::Buffer],
+        offsets: &[vk::DeviceSize],
+    ) {
+        unsafe {
+            self.device
+                .cmd_bind_vertex_buffers(command_buffer, first_binding, buffers, offsets)
+        }
     }
 
     #[inline]
-    pub(crate) unsafe fn cmd_bind_index_buffers(&self, command_buffer: vk::CommandBuffer, buffer: vk::Buffer, offset: vk::DeviceSize, index_type: vk::IndexType) {
-        unsafe { self.device.cmd_bind_index_buffer(command_buffer, buffer, offset, index_type) }
+    pub(crate) unsafe fn cmd_bind_index_buffers(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        buffer: vk::Buffer,
+        offset: vk::DeviceSize,
+        index_type: vk::IndexType,
+    ) {
+        unsafe {
+            self.device
+                .cmd_bind_index_buffer(command_buffer, buffer, offset, index_type)
+        }
     }
 
     #[inline]
-    pub(crate) unsafe fn cmd_draw_indexed(&self, command_buffer: vk::CommandBuffer, index_count: u32, instance_count: u32, first_index: u32, vertex_offset: i32, first_instance: u32) {
-        unsafe { self.device.cmd_draw_indexed(command_buffer, index_count, instance_count, first_index, vertex_offset, first_instance) }
+    pub(crate) unsafe fn cmd_draw_indexed(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        index_count: u32,
+        instance_count: u32,
+        first_index: u32,
+        vertex_offset: i32,
+        first_instance: u32,
+    ) {
+        unsafe {
+            self.device.cmd_draw_indexed(
+                command_buffer,
+                index_count,
+                instance_count,
+                first_index,
+                vertex_offset,
+                first_instance,
+            )
+        }
     }
 }
 
