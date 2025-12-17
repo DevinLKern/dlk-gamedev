@@ -147,7 +147,7 @@ impl Drop for Instance {
     }
 }
 
-#[allow(dead_code)]
+// #[derive(Debug)]
 pub struct Device {
     instance: std::rc::Rc<Instance>,
     physical_device: vk::PhysicalDevice,
@@ -303,6 +303,7 @@ impl Device {
         let device = {
             let enabled_device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
             let enabled_features = vk::PhysicalDeviceFeatures {
+                sampler_anisotropy: vk::TRUE,
                 ..Default::default()
             };
             let synchronization2_features = vk::PhysicalDeviceSynchronization2Features {
@@ -381,6 +382,15 @@ impl Device {
             self.instance
                 .instance
                 .get_physical_device_format_properties(self.physical_device, format)
+        }
+    }
+
+    #[inline]
+    pub unsafe fn get_physical_device_properties(&self) -> vk::PhysicalDeviceProperties {
+        unsafe {
+            self.instance
+                .instance
+                .get_physical_device_properties(self.physical_device)
         }
     }
 
@@ -662,6 +672,11 @@ impl Device {
         swapchain: vk::SwapchainKHR,
     ) -> VkResult<Vec<vk::Image>> {
         unsafe { self.swapchain_loader.get_swapchain_images(swapchain) }
+    }
+
+    #[inline]
+    pub fn get_queue_family_index(&self) -> u32 {
+        self.queue_family_index
     }
 
     #[inline]
@@ -975,6 +990,120 @@ impl Device {
                 vertex_offset,
                 first_instance,
             )
+        }
+    }
+
+    #[inline]
+    pub unsafe fn create_descriptor_pool(
+        &self,
+        create_info: &vk::DescriptorPoolCreateInfo,
+    ) -> VkResult<vk::DescriptorPool> {
+        unsafe {
+            self.device
+                .create_descriptor_pool(create_info, self.get_alloc_callbacks())
+        }
+    }
+
+    #[inline]
+    pub unsafe fn destroy_descriptor_pool(&self, pool: vk::DescriptorPool) {
+        unsafe {
+            self.device
+                .destroy_descriptor_pool(pool, self.get_alloc_callbacks())
+        }
+    }
+
+    #[inline]
+    pub unsafe fn allocate_descriptor_sets(
+        &self,
+        allocate_info: &vk::DescriptorSetAllocateInfo,
+    ) -> VkResult<Vec<vk::DescriptorSet>> {
+        unsafe { self.device.allocate_descriptor_sets(allocate_info) }
+    }
+
+    #[inline]
+    pub unsafe fn free_descriptor_sets(
+        &self,
+        pool: vk::DescriptorPool,
+        descriptor_sets: &[vk::DescriptorSet],
+    ) -> VkResult<()> {
+        unsafe { self.device.free_descriptor_sets(pool, descriptor_sets) }
+    }
+
+    #[inline]
+    pub unsafe fn cmd_bind_descriptor_sets(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        layout: &crate::pipeline::PipelineLayout,
+        first_set: u32,
+        descriptor_sets: &[vk::DescriptorSet],
+        dynamic_offsets: &[u32],
+    ) {
+        unsafe {
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                layout.bind_point,
+                layout.handle,
+                first_set,
+                descriptor_sets,
+                dynamic_offsets,
+            )
+        }
+    }
+
+    #[inline]
+    pub unsafe fn update_descriptor_sets(
+        &self,
+        descriptor_writes: &[vk::WriteDescriptorSet],
+        descriptor_copies: &[vk::CopyDescriptorSet],
+    ) {
+        unsafe {
+            self.device
+                .update_descriptor_sets(descriptor_writes, descriptor_copies)
+        }
+    }
+
+    #[inline]
+    pub unsafe fn cmd_copy_buffer(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        src_buffer: vk::Buffer,
+        dst_buffer: vk::Buffer,
+        regions: &[vk::BufferCopy],
+    ) {
+        unsafe {
+            self.device
+                .cmd_copy_buffer(command_buffer, src_buffer, dst_buffer, regions)
+        }
+    }
+
+    #[inline]
+    pub unsafe fn cmd_copy_buffer_to_image2(
+        &self,
+        command_buffer: vk::CommandBuffer,
+        copy_buffer_to_image_info: &vk::CopyBufferToImageInfo2,
+    ) {
+        unsafe {
+            self.device
+                .cmd_copy_buffer_to_image2(command_buffer, copy_buffer_to_image_info);
+        }
+    }
+
+    #[inline]
+    pub unsafe fn create_sampler(
+        &self,
+        create_info: &vk::SamplerCreateInfo,
+    ) -> VkResult<vk::Sampler> {
+        unsafe {
+            self.device
+                .create_sampler(create_info, self.get_alloc_callbacks())
+        }
+    }
+
+    #[inline]
+    pub unsafe fn destroy_sampler(&self, sampler: vk::Sampler) {
+        unsafe {
+            self.device
+                .destroy_sampler(sampler, self.get_alloc_callbacks())
         }
     }
 }

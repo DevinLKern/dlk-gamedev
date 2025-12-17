@@ -1,7 +1,7 @@
 pub mod result;
 
 use ash::vk;
-use renderer::render_context;
+use renderer::camera;
 use result::Result;
 
 use std::collections::HashMap;
@@ -29,43 +29,51 @@ macro_rules! trace_error {
 #[derive(Default)]
 pub struct Vertex {
     position: [f32; 3],
-    color: [f32; 3],
+    tex_coord: [f32; 2],
 }
 
 #[allow(dead_code)]
 struct Application {
-    windows: HashMap<WindowId, (Window, renderer::render_context::RenderContext)>,
-    device: Rc<vulkan::device::Device>,
+    windows: HashMap<WindowId, (renderer::render_context::RenderContext, Window)>,
+    renderer: renderer::Renderer,
     vertex_buffer: Rc<vulkan::buffer::BufferView>,
     index_buffer: Rc<vulkan::buffer::BufferView>,
+    image: Rc<vulkan::image::Image>,
+    model_anlge: [f32; 3],
+    camera: renderer::camera::CameraUBO,
     exiting: bool,
 }
 
 impl Application {
     fn new(
+        img_path: &std::path::Path,
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
         let instance = vulkan::device::Instance::new(debug_enabled, display_handle)?;
         let device = vulkan::device::Device::new(instance)?;
-        let device = Rc::new(device);
+        let renderer = renderer::Renderer::new(Rc::new(device))?;
 
         const F: f32 = 0.75;
         let vertex_buffer_data = vec![
             Vertex {
-                position: [-F, F, 0.0],
-                color: [1.0, 0.0, 0.0],
+                position: [-F, -F, 0.0],
+                tex_coord: [1.0, 0.0],
+            },
+            Vertex {
+                position: [F, -F, 0.0],
+                tex_coord: [0.0, 0.0],
             },
             Vertex {
                 position: [F, F, 0.0],
-                color: [0.0, 1.0, 0.0],
+                tex_coord: [0.0, 1.0],
             },
             Vertex {
-                position: [0.0, -F, 0.0],
-                color: [0.0, 0.0, 1.0],
+                position: [-F, F, 0.0],
+                tex_coord: [1.0, 1.0],
             },
         ];
-        let index_buffer_data = vec![0, 1, 2];
+        let index_buffer_data = vec![0, 1, 2, 2, 3, 0];
 
         let vertex_buffer = {
             let data = unsafe {
@@ -75,7 +83,7 @@ impl Application {
                 )
             };
 
-            renderer::create_vertex_buffer(device.clone(), data, 3, 0)?
+            renderer.create_vertex_buffer(data, vertex_buffer_data.len() as u32, 0)?
         };
         let index_buffer = {
             let data = unsafe {
@@ -85,15 +93,30 @@ impl Application {
                 )
             };
 
-            renderer::create_index_buffer(device.clone(), data, vk::IndexType::UINT32, 3, 0)?
+            renderer.create_index_buffer(
+                data,
+                vk::IndexType::UINT32,
+                index_buffer_data.len() as u32,
+                0,
+            )?
         };
 
+        let image = {
+            let image_data = image::open(img_path)?;
+
+            renderer.create_image(image_data)?
+        };
+
+        let camera = renderer::camera::CameraUBO::new(0.0, 0.0, 0.0);
         Ok(Self {
-            device,
+            renderer,
             windows: std::collections::HashMap::new(),
             vertex_buffer,
             index_buffer,
+            image,
             exiting: false,
+            camera,
+            model_anlge: [0.0, 0.0, 0.0],
         })
     }
 }
@@ -105,7 +128,7 @@ impl Application {
         event: winit::event::WindowEvent,
         window_id: &winit::window::WindowId,
     ) -> Result<bool> {
-        let (window, context) = self.windows.get_mut(window_id).unwrap();
+        let (context, window) = self.windows.get_mut(window_id).unwrap();
 
         match event {
             winit::event::WindowEvent::CloseRequested => {
@@ -113,16 +136,16 @@ impl Application {
                 // unsafe { self.renderer.destroy_render_context(context) };
                 return Ok(true);
             }
-            winit::event::WindowEvent::Resized(new_size) => {
-                println!("Resizeing to {:?}", new_size);
-
-                let new_context = render_context::RenderContext::new(self.device.clone(), window)?;
+            winit::event::WindowEvent::Resized(_) => {
+                let new_context = self
+                    .renderer
+                    .create_render_context(window, self.image.clone())?;
                 *context = new_context;
-
-                println!("Resized complete!");
             }
             winit::event::WindowEvent::RedrawRequested => {
-                println!("Redraw requested!");
+                // println!("Redraw requested!");
+                self.camera = camera::CameraUBO::new(self.model_anlge[0], self.model_anlge[1], self.model_anlge[2]);
+                context.update_current_camera(&self.camera);                
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
                 let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
@@ -134,8 +157,106 @@ impl Application {
                     context.draw(record_draw_commands)?;
                 }
             }
-            _ => {
-                // println!("Not implemented!");
+            winit::event::WindowEvent::KeyboardInput { event, .. } => {
+                const ANGLE: f32 = 0.1;
+                match event {
+                    winit::event::KeyEvent { physical_key, .. } => {
+                        match physical_key {
+                            winit::keyboard::PhysicalKey::Code(c) => {
+                                match c {
+                                    winit::keyboard::KeyCode::ArrowUp => {
+                                        self.model_anlge[0] += ANGLE;
+                                    }
+                                    winit::keyboard::KeyCode::ArrowDown => {
+                                        self.model_anlge[0] -= ANGLE;
+                                    }
+                                    winit::keyboard::KeyCode::ArrowLeft => {
+                                        self.model_anlge[1] += ANGLE;
+                                    }
+                                    winit::keyboard::KeyCode::ArrowRight => {
+                                        self.model_anlge[1] -= ANGLE;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                window.request_redraw();
+                // println!("Keyboard Input!");
+            }
+            winit::event::WindowEvent::Moved(_) => {
+                println!("Moved!");
+            }
+            winit::event::WindowEvent::Focused(_) => {
+                println!("Focused!");
+            }
+            winit::event::WindowEvent::MouseInput { .. } => {
+                println!("Mouse Input!");
+            }
+            winit::event::WindowEvent::CursorMoved { .. } => {
+                // println!("Cursor Moved!");
+            }
+            winit::event::WindowEvent::AxisMotion { .. } => {
+                println!("AxisMotion");
+            }
+            winit::event::WindowEvent::ActivationTokenDone { .. } => {
+                println!("Activation Token Done");
+            }
+            winit::event::WindowEvent::CursorLeft { .. } => {
+                println!("CursorLeft!");
+            }
+            winit::event::WindowEvent::MouseWheel { .. } => {
+                println!("MouseWheel!");
+            }
+            winit::event::WindowEvent::Occluded(_) => {
+                println!("Occluded!");
+            }
+            winit::event::WindowEvent::DroppedFile(_) => {
+                println!("Dropped file!");
+            }
+            winit::event::WindowEvent::HoveredFile(_) => {
+                println!("HoveredFile");
+            }
+            winit::event::WindowEvent::Ime(_) => {
+                println!("Ime!");
+            }
+            winit::event::WindowEvent::CursorEntered { .. } => {
+                println!("CursorEntered");
+            }
+            winit::event::WindowEvent::Destroyed { .. } => {
+                println!("Destroyed!");
+            }
+            winit::event::WindowEvent::HoveredFileCancelled => {
+                println!("HoveredFileCancelled");
+            }
+            winit::event::WindowEvent::ModifiersChanged(_) => {
+                println!("ModifiersChanged");
+            }
+            winit::event::WindowEvent::TouchpadPressure { .. } => {
+                println!("TouchpadPressure");
+            }
+            winit::event::WindowEvent::PinchGesture { .. } => {
+                println!("PinchGesture");
+            }
+            winit::event::WindowEvent::DoubleTapGesture { .. } => {
+                println!("DoubleTapGesture");
+            }
+            winit::event::WindowEvent::PanGesture { .. } => {
+                println!("PanGesture");
+            }
+            winit::event::WindowEvent::RotationGesture { .. } => {
+                println!("RotationGesture");
+            }
+            winit::event::WindowEvent::Touch(_) => {
+                println!("Touch");
+            }
+            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+                println!("ScaleFactorChanged");
+            }
+            winit::event::WindowEvent::ThemeChanged(_) => {
+                println!("ThemeChanged");
             }
         }
 
@@ -150,8 +271,6 @@ impl ApplicationHandler for Application {
 
         println!("Exiting!");
         self.exiting = true;
-
-        // cleanup here?
 
         return event_loop.exit();
     }
@@ -172,15 +291,17 @@ impl ApplicationHandler for Application {
             }
         };
         let window_id = window.id();
-        let context =
-            match renderer::render_context::RenderContext::new(self.device.clone(), &window) {
-                Ok(context) => context,
-                Err(e) => {
-                    trace_error!(e);
-                    return self.exiting(event_loop);
-                }
-            };
-        self.windows.insert(window_id, (window, context));
+        let context = match self
+            .renderer
+            .create_render_context(&window, self.image.clone())
+        {
+            Ok(context) => context,
+            Err(e) => {
+                trace_error!(e);
+                return self.exiting(event_loop);
+            }
+        };
+        self.windows.insert(window_id, (context, window));
     }
 
     fn window_event(
@@ -208,13 +329,24 @@ impl ApplicationHandler for Application {
 }
 
 fn main() -> Result<()> {
-    println!("Current dir: {}", std::env::current_dir()?.display());
+    let img_path = {
+        let args: Vec<String> = std::env::args().collect();
+        if args.len() != 3 {
+            let e = result::Error::IncorrectProgramUsage;
+            println!("{}", e);
+            return Err(e);
+        }
+
+        std::env::set_current_dir(args[1].clone())?;
+
+        std::path::PathBuf::from(args[2].clone())
+    };
     let event_loop = EventLoop::new()?;
 
     let mut app = {
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(true, &display_handle)?
+        Application::new(img_path.as_path(), true, &display_handle)?
     };
 
     event_loop.run_app(&mut app)?;

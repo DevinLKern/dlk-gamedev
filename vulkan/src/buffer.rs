@@ -18,10 +18,10 @@ pub struct BufferCreateInfo {
 
 pub struct Buffer {
     device: Rc<crate::device::Device>,
-    pub(crate) handle: vk::Buffer,
-    pub(crate) memory: vk::DeviceMemory,
-    pub(crate) size: vk::DeviceSize,
-    pub(crate) offset: vk::DeviceSize,
+    pub handle: vk::Buffer,
+    pub memory: vk::DeviceMemory,
+    pub size: vk::DeviceSize,
+    pub offset: vk::DeviceSize,
 }
 
 impl Buffer {
@@ -88,14 +88,14 @@ impl Buffer {
     }
 
     #[inline]
-    pub unsafe fn map(&self) -> ash::prelude::VkResult<*mut std::ffi::c_void> {
+    pub unsafe fn map_memory(
+        &self,
+        offset: vk::DeviceSize,
+        size: vk::DeviceSize,
+    ) -> ash::prelude::VkResult<*mut std::ffi::c_void> {
         unsafe {
-            self.device.map_memory(
-                self.memory,
-                self.offset,
-                self.size,
-                ash::vk::MemoryMapFlags::empty(),
-            )
+            self.device
+                .map_memory(self.memory, offset, size, ash::vk::MemoryMapFlags::empty())
         }
     }
 
@@ -127,7 +127,17 @@ pub enum BufferView {
         index_count: u32,
         instance_count: u32,
         first_index: u32,
-        index_type: ash::vk::IndexType,
+        index_type: vk::IndexType,
+    },
+    Uniform {
+        buffer: Rc<Buffer>,
+        offset: vk::DeviceSize,
+        size: vk::DeviceSize,
+    },
+    DynamicUniform {
+        buffer: Rc<Buffer>,
+        offset: vk::DeviceSize,
+        size: vk::DeviceSize,
     },
 }
 
@@ -146,6 +156,7 @@ impl BufferView {
                     .device
                     .cmd_bind_index_buffers(command_buffer, buffer.handle, 0, *index_type)
             },
+            _ => todo!(),
         }
     }
 

@@ -12,6 +12,7 @@ pub struct Swapchain {
     format: vk::Format,
     images: Box<[vk::Image]>,
     image_views: Box<[vk::ImageView]>,
+    present_mode: vk::PresentModeKHR,
 }
 
 impl Swapchain {
@@ -124,6 +125,7 @@ impl Swapchain {
             extent: image_extent,
             images: swapchain_images,
             image_views: views,
+            present_mode,
         })
     }
 
@@ -157,6 +159,10 @@ impl Swapchain {
         self.format
     }
 
+    pub fn get_present_mode(&self) -> vk::PresentModeKHR {
+        self.present_mode
+    }
+
     pub unsafe fn acquire_next_image(
         &self,
         semaphore: vk::Semaphore,
@@ -180,6 +186,7 @@ impl Drop for Swapchain {
             for image_view in self.image_views.iter().rev() {
                 self.device.destroy_image_view(*image_view);
             }
+
             self.device.destroy_swapchain(self.swapchain);
 
             self.device.destroy_surface(self.surface);

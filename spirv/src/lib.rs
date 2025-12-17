@@ -143,6 +143,7 @@ pub struct UniformInfo {
     pub set: u32,
     pub uniform_type: UniformType,
     pub name: Option<Rc<str>>,
+    pub size: Option<u32>,
 }
 
 #[allow(dead_code)]
@@ -650,6 +651,65 @@ impl ShaderModule {
             _ => Err(Error::InvalidType),
         }
     }
+
+    fn get_size_from_id(&self, type_id: &u32) -> Result<u32> {
+        match self
+            .types
+            .get(type_id)
+            .ok_or(Error::NoAssociatedType(*type_id))?
+        {
+            &OpTypeInfo::Int { width, .. } => Ok(width / 8),
+            &OpTypeInfo::Float { width } => Ok(width / 8),
+            &OpTypeInfo::Vector {
+                component_type_id,
+                component_count,
+            } => {
+                let component_size = self.get_size_from_id(&component_type_id)?;
+                Ok(component_size * component_count)
+            }
+            &OpTypeInfo::Matrix {
+                column_type_id,
+                column_count,
+            } => {
+                let column_size = self.get_size_from_id(&column_type_id)?;
+                Ok(column_size * column_count)
+            }
+            OpTypeInfo::Struct { member_types } => {
+                let mut member = 0;
+                let mut max_offset_size = 0;
+                let decorations = self
+                    .member_decorations
+                    .get(type_id)
+                    .ok_or(Error::DecorationMissing(*type_id))?;
+                for decoration in decorations.iter() {
+                    if decoration.decoration != 35 {
+                        continue;
+                    }
+                    if decoration.extra_operands[0] > max_offset_size {
+                        member = decoration.literal_member;
+                        max_offset_size = decoration.extra_operands[0];
+                    }
+                }
+
+                let size = self.get_size_from_id(member_types.get(member as usize).unwrap())?;
+                Ok(max_offset_size + size)
+            }
+            OpTypeInfo::Sampler => Ok(0),
+            OpTypeInfo::SampledImage { .. } => Ok(0),
+            OpTypeInfo::Pointer {
+                storage_class,
+                type_id,
+            } => {
+                if *storage_class == 12 {
+                    // 12 == storage buffer
+                    Ok(0)
+                } else {
+                    self.get_size_from_id(type_id)
+                }
+            }
+            _ => Err(Error::InvalidType),
+        }
+    }
     #[inline]
     pub fn get_inputs(&self) -> Result<Vec<ShaderIoInfo>> {
         // self.get_io_infos(1)
@@ -712,6 +772,15 @@ impl ShaderModule {
     pub fn get_outputs(&self) -> Result<Vec<ShaderIoInfo>> {
         Err(Error::InvalidType)
     }
+    #[inline]
+    fn get_uniform_type_from_id(&self, id: &u32) -> Result<UniformType> {
+        match self.types.get(id).ok_or(Error::NoAssociatedType(*id))? {
+            OpTypeInfo::Pointer { type_id, .. } => self.get_uniform_type_from_id(type_id),
+            OpTypeInfo::SampledImage { .. } => Ok(UniformType::SampledImage),
+            OpTypeInfo::Sampler => Ok(UniformType::Sampler),
+            _ => Ok(UniformType::UniformBuffer),
+        }
+    }
 
     pub fn get_uniforms(&self) -> Result<Vec<UniformInfo>> {
         let mut uniforms = Vec::new();
@@ -736,7 +805,7 @@ impl ShaderModule {
                                 binding = Some(b);
                             }
                         }
-                        35 => {
+                        34 => {
                             // DescriptorSet
                             if let Some(&s) = d.extra_operands.get(0) {
                                 set = Some(s);
@@ -751,23 +820,13 @@ impl ShaderModule {
             let set = set.unwrap_or(0); // default to 0 if no DescriptorSet
 
             // Determine uniform type
-            let uniform_type = if *storage_class == 12 {
-                UniformType::StorageBuffer
+            let (uniform_type, size) = if *storage_class == 12 {
+                (UniformType::StorageBuffer, None)
             } else {
-                match self.types.get(type_id).unwrap_or(&OpTypeInfo::Other) {
-                    OpTypeInfo::Pointer { .. } => UniformType::Other,
-                    OpTypeInfo::Struct { .. } => UniformType::UniformBuffer,
-                    OpTypeInfo::Image { sampled, .. } => {
-                        if *sampled == 2 {
-                            UniformType::SampledImage
-                        } else {
-                            UniformType::StorageBuffer
-                        }
-                    }
-                    OpTypeInfo::Sampler => UniformType::Sampler,
-                    OpTypeInfo::SampledImage { .. } => UniformType::SampledImage,
-                    _ => UniformType::Other,
-                }
+                let ty = self.get_uniform_type_from_id(type_id)?;
+                let s = self.get_size_from_id(type_id)?;
+
+                (ty, Some(s))
             };
 
             uniforms.push(UniformInfo {
@@ -775,6 +834,7 @@ impl ShaderModule {
                 set,
                 uniform_type,
                 name: self.names.get(id).cloned(),
+                size,
             });
         }
 

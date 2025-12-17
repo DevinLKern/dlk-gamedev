@@ -4,10 +4,10 @@
 # Requires: glslc (from Shaderc / Vulkan SDK)
 
 # Directory to scan (default = current directory)
-SHADER_DIR="${1:-.}"
+SHADER_DIR="shaders"
 
 # Output directory for compiled SPIR-V binaries
-OUT_DIR="$SHADER_DIR/compiled"
+OUT_DIR="files/compiled-shaders"
 mkdir -p "$OUT_DIR"
 
 echo "Compiling shaders from: $SHADER_DIR"
@@ -15,7 +15,7 @@ echo "Output directory: $OUT_DIR"
 echo ""
 
 # File extensions to check
-EXTENSIONS=("vert" "frag" "comp" "geom" "tesc" "tese")
+EXTENSIONS=("vert" "frag")
 
 for ext in "${EXTENSIONS[@]}"; do
     for shader in "$SHADER_DIR"/*."$ext"; do
@@ -29,13 +29,11 @@ for ext in "${EXTENSIONS[@]}"; do
         glslc "$shader" -o "$out_file"
 
         if [[ $? -ne 0 ]]; then
-            echo "❌ Failed to compile $shader"
+            echo "Error: Failed to compile $shader"
         else
-            echo "✅ Success"
+            echo "Success"
         fi
-        echo ""
     done
 done
 
-echo "All done!"
 

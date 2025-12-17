@@ -55,7 +55,7 @@ fn spirv_uniform_type_to_vk_descriptor_type(
 ) -> ash::vk::DescriptorType {
     match uniform_type {
         spirv::UniformType::Sampler => vk::DescriptorType::SAMPLER,
-        spirv::UniformType::SampledImage => vk::DescriptorType::SAMPLED_IMAGE,
+        spirv::UniformType::SampledImage => vk::DescriptorType::COMBINED_IMAGE_SAMPLER, // TODO: fix this. it's VERY questionable.
         spirv::UniformType::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
         spirv::UniformType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
         spirv::UniformType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
@@ -65,8 +65,8 @@ fn spirv_uniform_type_to_vk_descriptor_type(
 
 pub unsafe fn create_shader_modules(
     device: Rc<crate::device::Device>,
-    shader_path: String,
-) -> Result<(spirv::ShaderModule, vk::ShaderModule)> {
+    shader_path: &std::path::Path,
+) -> Result<(Rc<spirv::ShaderModule>, vk::ShaderModule)> {
     let shader_code = {
         let mut file = std::fs::File::open(shader_path)?;
 
@@ -77,7 +77,7 @@ pub unsafe fn create_shader_modules(
         data
     };
 
-    let spv_module = spirv::ShaderModule::from_code(shader_code.as_slice())?;
+    let spv_module = Rc::new(spirv::ShaderModule::from_code(shader_code.as_slice())?);
 
     let vk_module = {
         let shader_module_create_info = vk::ShaderModuleCreateInfo {
@@ -93,64 +93,76 @@ pub unsafe fn create_shader_modules(
 }
 
 #[allow(dead_code)]
-pub struct OwnedDescriptorSetLayoutBinding {
+#[derive(Debug)]
+pub struct DescriptorSetLayoutBindingInfo {
     pub binding: u32,
     pub descriptor_type: vk::DescriptorType,
     pub descriptor_count: u32,
     pub stage_flags: vk::ShaderStageFlags,
     pub p_immutable_shader: *const vk::Sampler,
+    pub size: Option<u32>,
 }
 
+impl std::fmt::Display for DescriptorSetLayoutBindingInfo {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{{binding: {}, descriptor_type: {:?}, descriptor_count: {:?}, stage_flags: {:?}, size: {:?}}}",
+            self.binding, self.descriptor_type, self.descriptor_count, self.stage_flags, self.size,
+        )
+    }
+}
+
+// #[derive(Debug)]
 pub struct DescriptorSetLayout {
     device: Rc<crate::device::Device>,
-    pub name_to_binding: HashMap<Rc<str>, usize>,
-    pub bindings: Box<[OwnedDescriptorSetLayoutBinding]>,
+    pub set: u32,
+    pub bindings: Box<[DescriptorSetLayoutBindingInfo]>,
     pub handle: vk::DescriptorSetLayout,
 }
 
 impl DescriptorSetLayout {
     pub(crate) fn new(
         device: Rc<crate::device::Device>,
-        binding_names: &[(Rc<str>, u32)],
-        bindings: &[vk::DescriptorSetLayoutBinding<'_>],
+        set: u32,
+        bindings: &[(vk::ShaderStageFlags, spirv::UniformInfo)],
     ) -> VkResult<DescriptorSetLayout> {
-        let descriptor_set_layout = {
-            let create_info = vk::DescriptorSetLayoutCreateInfo {
-                binding_count: bindings.len() as u32,
-                p_bindings: bindings.as_ptr(),
-                ..Default::default()
-            };
-
-            unsafe { device.create_descriptor_set_layout(&create_info)? }
-        };
-
-        let owned_bindings: Box<[OwnedDescriptorSetLayoutBinding]> = bindings
+        let owned_bindings: Box<[DescriptorSetLayoutBindingInfo]> = bindings
             .iter()
-            .map(|b| OwnedDescriptorSetLayoutBinding {
-                binding: b.binding,
-                descriptor_type: b.descriptor_type,
-                descriptor_count: b.descriptor_count,
-                stage_flags: b.stage_flags,
-                p_immutable_shader: b.p_immutable_samplers,
+            .map(|(f, u)| DescriptorSetLayoutBindingInfo {
+                binding: u.binding,
+                descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
+                descriptor_count: 1,
+                stage_flags: *f,
+                p_immutable_shader: std::ptr::null(),
+                size: u.size,
             })
             .collect();
 
-        let mut name_to_binding = HashMap::<Rc<str>, usize>::new();
-        for (name, binding) in binding_names.iter() {
-            let index = owned_bindings
+        let handle = {
+            let vk_bindings: Box<[vk::DescriptorSetLayoutBinding<'_>]> = bindings
                 .iter()
-                .enumerate()
-                .find_map(|(i, b)| if b.binding == *binding { Some(i) } else { None });
-            if let Some(i) = index {
-                name_to_binding.insert(name.clone(), i);
-            }
-        }
+                .map(|(f, u)| vk::DescriptorSetLayoutBinding {
+                    binding: u.binding,
+                    descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
+                    descriptor_count: 1,
+                    stage_flags: *f,
+                    ..Default::default()
+                })
+                .collect();
+            let create_info = vk::DescriptorSetLayoutCreateInfo {
+                binding_count: vk_bindings.len() as u32,
+                p_bindings: vk_bindings.as_ptr(),
+                ..Default::default()
+            };
+            unsafe { device.create_descriptor_set_layout(&create_info) }?
+        };
 
         Ok(DescriptorSetLayout {
             device,
-            name_to_binding,
             bindings: owned_bindings,
-            handle: descriptor_set_layout,
+            set,
+            handle,
         })
     }
 }
@@ -166,28 +178,35 @@ impl Drop for DescriptorSetLayout {
 impl std::fmt::Display for DescriptorSetLayout {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{{bindings: [")?;
-        for (name, binding_index) in self.name_to_binding.iter() {
-            if let Some(binding) = self.bindings.get(*binding_index) {
-                write!(
-                    f,
-                    "\'{}\': {{binding: {}, descriptor_type: {:?}, descriptor_count: {:?}, stage_flags: {:?}}}",
-                    name,
-                    binding.binding,
-                    binding.descriptor_type,
-                    binding.descriptor_count,
-                    binding.stage_flags
-                )?;
-            }
+        for binding in self.bindings.iter() {
+            write!(
+                f,
+                "{{binding: {}, descriptor_type: {:?}, descriptor_count: {:?}, stage_flags: {:?}, size: {:?}}}",
+                binding.binding,
+                binding.descriptor_type,
+                binding.descriptor_count,
+                binding.stage_flags,
+                binding.size
+            )?;
         }
         write!(f, "], handle: {:?}}}", self.handle)
     }
 }
 
+pub enum PipelineLayoutCreateInfo {
+    Graphics {
+        vert_spv_module: Rc<spirv::ShaderModule>,
+        frag_spv_module: Rc<spirv::ShaderModule>,
+    },
+    Compute,
+}
+
 pub struct PipelineLayout {
     // maps name to the set number and information about the set
     device: Rc<crate::device::Device>,
+    pub(crate) bind_point: vk::PipelineBindPoint,
     set_layouts: Box<[DescriptorSetLayout]>,
-    handle: vk::PipelineLayout,
+    pub(crate) handle: vk::PipelineLayout,
 }
 
 impl std::fmt::Display for PipelineLayout {
@@ -202,79 +221,46 @@ impl std::fmt::Display for PipelineLayout {
     }
 }
 
-impl<'a> PipelineLayout {
-    fn new(
+impl PipelineLayout {
+    pub fn new_graphics(
         device: Rc<crate::device::Device>,
         vert_spv_module: &spirv::ShaderModule,
         frag_spv_module: &spirv::ShaderModule,
     ) -> Result<PipelineLayout> {
         // maps (set, binding) to the uniforms stages, type and name
-        let mut set_infos = HashMap::<
-            (u32, u32),
-            (vk::ShaderStageFlags, spirv::UniformType, Option<Rc<str>>),
-        >::new();
+        let mut uniform_infos =
+            HashMap::<(u32, u32), (vk::ShaderStageFlags, spirv::UniformInfo)>::new();
 
         let vert_uniforms = vert_spv_module.get_uniforms()?;
         for u in vert_uniforms.into_iter() {
-            set_infos.insert(
-                (u.set, u.binding),
-                (vk::ShaderStageFlags::VERTEX, u.uniform_type, u.name),
-            );
+            uniform_infos.insert((u.set, u.binding), (vk::ShaderStageFlags::VERTEX, u));
         }
         let frag_uniforms = frag_spv_module.get_uniforms()?;
         for u in frag_uniforms.into_iter() {
-            if let Some((flags, uniform_type, name)) = set_infos.get_mut(&(u.set, u.binding)) {
-                if *uniform_type != u.uniform_type || *name != u.name {
-                    return Err(Error::NotImplemented); // TODO: add type
-                }
+            if let Some((flags, _)) = uniform_infos.get_mut(&(u.set, u.binding)) {
                 *flags |= vk::ShaderStageFlags::FRAGMENT;
                 continue;
             }
-            set_infos.insert(
-                (u.set, u.binding),
-                (vk::ShaderStageFlags::FRAGMENT, u.uniform_type, u.name),
-            );
+            uniform_infos.insert((u.set, u.binding), (vk::ShaderStageFlags::FRAGMENT, u));
         }
 
-        let mut set_bindings = HashMap::<u32, Vec<vk::DescriptorSetLayoutBinding>>::new();
-        let mut set_names = HashMap::<Rc<str>, (u32, u32)>::new();
-        for ((set, binding), (stage_flags, uniform_type, name)) in set_infos.into_iter() {
-            if let Some(name) = name {
-                if let Some(_) = set_names.insert(name, (set, binding)) {
-                    return Err(Error::NotImplemented); // TODO: add type
-                }
+        let mut set_infos = HashMap::<u32, Vec<(vk::ShaderStageFlags, spirv::UniformInfo)>>::new();
+        for ((set, _), info) in uniform_infos.into_iter() {
+            if let Some(v) = set_infos.get_mut(&set) {
+                v.push(info);
+                continue;
             }
-            let binding = vk::DescriptorSetLayoutBinding {
-                binding,
-                descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&uniform_type),
-                descriptor_count: 1,
-                stage_flags,
-                ..Default::default()
-            };
-            if let Some(bindings) = set_bindings.get_mut(&set) {
-                bindings.push(binding);
-            } else {
-                set_bindings.insert(set, vec![binding]);
-            }
+
+            set_infos.insert(set, vec![info]);
         }
 
         let mut set_layouts = Vec::new();
-        for (set, bindings) in set_bindings.into_iter() {
-            let binding_names: Box<[(Rc<str>, u32)]> = set_names
-                .iter()
-                .filter_map(|(n, (s, b))| {
-                    if *s == set {
-                        Some((n.clone(), *b))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            let set_layout =
-                DescriptorSetLayout::new(device.clone(), &binding_names, bindings.as_slice())?;
-
-            set_layouts.push(set_layout);
+        for (set, infos) in set_infos.into_iter() {
+            let layout = DescriptorSetLayout::new(device.clone(), set, infos.as_slice())?;
+            set_layouts.push(layout);
         }
+
+        set_layouts.sort_by(|a, b| a.set.cmp(&b.set));
 
         let pipeline_layout = {
             let layouts: Box<[vk::DescriptorSetLayout]> =
@@ -290,13 +276,19 @@ impl<'a> PipelineLayout {
 
         Ok(PipelineLayout {
             device,
+            bind_point: vk::PipelineBindPoint::GRAPHICS,
             set_layouts: set_layouts.into_boxed_slice(),
             handle: pipeline_layout,
         })
     }
+
+    #[inline]
+    pub fn get_set_layouts(&self) -> &[DescriptorSetLayout] {
+        &self.set_layouts
+    }
 }
 
-impl<'a> Drop for PipelineLayout {
+impl Drop for PipelineLayout {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_pipeline_layout(self.handle);
@@ -307,16 +299,17 @@ impl<'a> Drop for PipelineLayout {
 #[allow(dead_code)]
 pub struct Pipeline {
     device: Rc<crate::device::Device>,
-    layout: PipelineLayout,
+    layout: Rc<PipelineLayout>,
     pipeline: vk::Pipeline,
 }
 
 pub enum PipelineCreateInfo {
     Graphics {
         vk_vertex_shader_module: vk::ShaderModule,
-        spv_vertex_shader_module: spirv::ShaderModule,
+        spv_vertex_shader_module: Rc<spirv::ShaderModule>,
         vk_frag_shader_module: vk::ShaderModule,
-        spv_frag_shader_module: spirv::ShaderModule,
+        spv_frag_shader_module: Rc<spirv::ShaderModule>,
+        layout: Rc<PipelineLayout>,
         color_formats: Rc<[vk::Format]>,
         depth_format: vk::Format,
         stencil_format: vk::Format,
@@ -334,230 +327,219 @@ impl Pipeline {
                 spv_vertex_shader_module,
                 vk_frag_shader_module,
                 spv_frag_shader_module,
+                layout,
                 color_formats,
                 depth_format,
                 stencil_format,
             } => {
-                let pipeline_layout = PipelineLayout::new(
-                    device.clone(),
-                    &spv_vertex_shader_module,
-                    &spv_frag_shader_module,
-                )
-                .inspect_err(|e| trace_error!(e))?;
-
-                let pipeline = {
-                    let vert_entry_point_name = spv_vertex_shader_module
-                        .get_input_names()
-                        .iter()
-                        .find_map(|s| {
-                            if s.as_ref() == "main" {
-                                std::ffi::CString::new(s.as_ref()).ok()
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
-                        .inspect_err(|e| trace_error!(e))?;
-                    let frag_entry_point_name = spv_frag_shader_module
-                        .get_input_names()
-                        .iter()
-                        .find_map(|s| {
-                            if s.as_ref() == "main" {
-                                std::ffi::CString::new(s.as_ref()).ok()
-                            } else {
-                                None
-                            }
-                        })
-                        .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
-                        .inspect_err(|e| trace_error!(e))?;
-                    let stages = {
-                        let vert_stage = vk::PipelineShaderStageCreateInfo {
-                            stage: vk::ShaderStageFlags::VERTEX,
-                            module: *vk_vertex_shader_module,
-                            p_name: vert_entry_point_name.as_ptr(),
-                            ..Default::default()
-                        };
-                        let frag_stage = vk::PipelineShaderStageCreateInfo {
-                            stage: vk::ShaderStageFlags::FRAGMENT,
-                            module: *vk_frag_shader_module,
-                            p_name: frag_entry_point_name.as_ptr(),
-                            ..Default::default()
-                        };
-                        [vert_stage, frag_stage]
-                    };
-
-                    let (vertex_input_attribute_descriptions, vertex_input_binding_descriptions) = {
-                        let mut inputs = spv_vertex_shader_module.get_inputs()?;
-                        let mut vk_input_attributes = Vec::new();
-                        for input in inputs.iter() {
-                            let attribute = vk::VertexInputAttributeDescription {
-                                location: input.location,
-                                binding: input.binding,
-                                format: spirv_type_to_vk_format(&input.io_type),
-                                offset: 0,
-                                ..Default::default()
-                            };
-                            vk_input_attributes.push(attribute);
+                let vert_entry_point_name = spv_vertex_shader_module
+                    .get_input_names()
+                    .iter()
+                    .find_map(|s| {
+                        if s.as_ref() == "main" {
+                            std::ffi::CString::new(s.as_ref()).ok()
+                        } else {
+                            None
                         }
-
-                        // sort inputs by location and then by binding
-                        vk_input_attributes.sort_by(|a, b| {
-                            a.binding
-                                .cmp(&b.binding)
-                                .then_with(|| a.location.cmp(&b.location))
-                        });
-                        inputs.sort_by(|a, b| {
-                            a.binding
-                                .cmp(&b.binding)
-                                .then_with(|| a.location.cmp(&b.location))
-                        });
-
-                        let mut vk_binding_descriptions = Vec::new();
-                        let (mut l, mut r): (usize, usize) = (0, 0);
-                        while r < vk_input_attributes.len() {
-                            while r < vk_input_attributes.len()
-                                && vk_input_attributes[l].binding == vk_input_attributes[r].binding
-                            {
-                                r += 1;
-                            }
-
-                            let mut stride: u32 = 0;
-                            for i in l..r {
-                                vk_input_attributes[i].offset = stride;
-                                stride += inputs[i].stride;
-                            }
-
-                            vk_binding_descriptions.push(vk::VertexInputBindingDescription {
-                                binding: vk_input_attributes[l].binding,
-                                stride,
-                                input_rate: vk::VertexInputRate::VERTEX,
-                            });
-
-                            l = r;
-                        }
-
-                        (vk_input_attributes, vk_binding_descriptions)
-                    };
-                    let vertex_input_state = ash::vk::PipelineVertexInputStateCreateInfo {
-                        vertex_binding_description_count: vertex_input_binding_descriptions.len()
-                            as u32,
-                        p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
-                        vertex_attribute_description_count: vertex_input_attribute_descriptions
-                            .len()
-                            as u32,
-                        p_vertex_attribute_descriptions: vertex_input_attribute_descriptions
-                            .as_ptr(),
-                        ..Default::default()
-                    };
-                    let input_assembly_state = ash::vk::PipelineInputAssemblyStateCreateInfo {
-                        topology: ash::vk::PrimitiveTopology::TRIANGLE_LIST,
-                        primitive_restart_enable: ash::vk::FALSE,
-                        ..Default::default()
-                    };
-                    let viewport_state = ash::vk::PipelineViewportStateCreateInfo {
-                        viewport_count: 1,
-                        p_viewports: std::ptr::null(), // Since dynamic viewports is enabled this can be null
-                        scissor_count: 1,
-                        p_scissors: std::ptr::null(), // this is also be dynamic
-                        ..Default::default()
-                    };
-                    let rasterization_state = ash::vk::PipelineRasterizationStateCreateInfo {
-                        depth_clamp_enable: ash::vk::FALSE,
-                        rasterizer_discard_enable: ash::vk::FALSE,
-                        polygon_mode: ash::vk::PolygonMode::FILL,
-                        cull_mode: ash::vk::CullModeFlags::NONE,
-                        front_face: ash::vk::FrontFace::CLOCKWISE,
-                        depth_bias_enable: ash::vk::FALSE,
-                        depth_bias_constant_factor: 0.0,
-                        depth_bias_clamp: 0.0,
-                        depth_bias_slope_factor: 0.0,
-                        line_width: 1.0, // dyamic states is on and VK_DYNAMIC_STATE_LINE_WIDTH is not
-                        ..Default::default()
-                    };
-                    let multisample_state = ash::vk::PipelineMultisampleStateCreateInfo {
-                        rasterization_samples: ash::vk::SampleCountFlags::TYPE_1,
-                        sample_shading_enable: ash::vk::FALSE,
-                        ..Default::default()
-                    };
-                    let depth_stencil_state = ash::vk::PipelineDepthStencilStateCreateInfo {
-                        depth_test_enable: ash::vk::TRUE,
-                        depth_write_enable: ash::vk::TRUE,
-                        depth_compare_op: ash::vk::CompareOp::LESS,
-                        depth_bounds_test_enable: ash::vk::FALSE,
-                        stencil_test_enable: ash::vk::FALSE,
-                        min_depth_bounds: 0.0,
-                        max_depth_bounds: 1.0,
-                        ..Default::default()
-                    };
-                    let attachments = [ash::vk::PipelineColorBlendAttachmentState {
-                        blend_enable: ash::vk::FALSE,
-                        src_color_blend_factor: ash::vk::BlendFactor::ZERO,
-                        dst_color_blend_factor: ash::vk::BlendFactor::ZERO,
-                        color_blend_op: ash::vk::BlendOp::ADD,
-                        src_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
-                        dst_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
-                        alpha_blend_op: ash::vk::BlendOp::ADD,
-                        color_write_mask: ash::vk::ColorComponentFlags::RGBA,
-                    }];
-                    let color_blend_state = ash::vk::PipelineColorBlendStateCreateInfo {
-                        logic_op_enable: ash::vk::FALSE,
-                        logic_op: ash::vk::LogicOp::COPY,
-                        attachment_count: attachments.len() as u32,
-                        p_attachments: attachments.as_ptr(),
-                        blend_constants: [0.0, 0.0, 0.0, 0.0],
-                        ..Default::default()
-                    };
-                    let dynamic_states = [
-                        ash::vk::DynamicState::VIEWPORT,
-                        ash::vk::DynamicState::SCISSOR,
-                    ];
-                    let dynamic_state = ash::vk::PipelineDynamicStateCreateInfo {
-                        dynamic_state_count: dynamic_states.len() as u32,
-                        p_dynamic_states: dynamic_states.as_ptr(),
-                        ..Default::default()
-                    };
-                    let pipeline_rendering_info = vk::PipelineRenderingCreateInfo {
-                        color_attachment_count: color_formats.len() as u32,
-                        p_color_attachment_formats: color_formats.as_ptr(),
-                        depth_attachment_format: *depth_format,
-                        stencil_attachment_format: *stencil_format,
-                        ..Default::default()
-                    };
-                    let pipeline_create_info = ash::vk::GraphicsPipelineCreateInfo {
-                        p_next: &pipeline_rendering_info as *const _ as *const std::ffi::c_void,
-                        stage_count: stages.len() as u32,
-                        p_stages: stages.as_ptr(),
-                        p_vertex_input_state: &vertex_input_state,
-                        p_input_assembly_state: &input_assembly_state,
-                        p_tessellation_state: std::ptr::null(),
-                        p_viewport_state: &viewport_state,
-                        p_rasterization_state: &rasterization_state,
-                        p_multisample_state: &multisample_state,
-                        p_depth_stencil_state: &depth_stencil_state,
-                        p_color_blend_state: &color_blend_state,
-                        p_dynamic_state: &dynamic_state,
-                        layout: pipeline_layout.handle,
-                        render_pass: ash::vk::RenderPass::null(), // dynamic rendering is enabled
-                        subpass: 0,
-                        ..Default::default()
-                    };
-
-                    let pipelines = unsafe {
-                        device.create_graphics_pipelines(
-                            ash::vk::PipelineCache::null(),
-                            &[pipeline_create_info],
-                        )
-                    }
-                    .map_err(|(_, vk_err)| vk_err)
+                    })
+                    .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
                     .inspect_err(|e| trace_error!(e))?;
-
-                    pipelines[0]
+                let frag_entry_point_name = spv_frag_shader_module
+                    .get_input_names()
+                    .iter()
+                    .find_map(|s| {
+                        if s.as_ref() == "main" {
+                            std::ffi::CString::new(s.as_ref()).ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .ok_or_else(|| Error::CouldNotDetermineEntryPointName)
+                    .inspect_err(|e| trace_error!(e))?;
+                let stages = {
+                    let vert_stage = vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::VERTEX,
+                        module: *vk_vertex_shader_module,
+                        p_name: vert_entry_point_name.as_ptr(),
+                        ..Default::default()
+                    };
+                    let frag_stage = vk::PipelineShaderStageCreateInfo {
+                        stage: vk::ShaderStageFlags::FRAGMENT,
+                        module: *vk_frag_shader_module,
+                        p_name: frag_entry_point_name.as_ptr(),
+                        ..Default::default()
+                    };
+                    [vert_stage, frag_stage]
                 };
+
+                let (vertex_input_attribute_descriptions, vertex_input_binding_descriptions) = {
+                    let mut inputs: Vec<spirv::ShaderIoInfo> =
+                        spv_vertex_shader_module.get_inputs()?;
+                    let mut vk_input_attributes = Vec::new();
+                    for input in inputs.iter() {
+                        let attribute = vk::VertexInputAttributeDescription {
+                            location: input.location,
+                            binding: input.binding,
+                            format: spirv_type_to_vk_format(&input.io_type),
+                            offset: 0,
+                            ..Default::default()
+                        };
+                        vk_input_attributes.push(attribute);
+                    }
+
+                    // sort inputs by location and then by binding
+                    vk_input_attributes.sort_by(|a, b| {
+                        a.binding
+                            .cmp(&b.binding)
+                            .then_with(|| a.location.cmp(&b.location))
+                    });
+                    inputs.sort_by(|a, b| {
+                        a.binding
+                            .cmp(&b.binding)
+                            .then_with(|| a.location.cmp(&b.location))
+                    });
+
+                    let mut vk_binding_descriptions = Vec::new();
+                    let (mut l, mut r): (usize, usize) = (0, 0);
+                    while r < vk_input_attributes.len() {
+                        while r < vk_input_attributes.len()
+                            && vk_input_attributes[l].binding == vk_input_attributes[r].binding
+                        {
+                            r += 1;
+                        }
+
+                        let mut stride: u32 = 0;
+                        for i in l..r {
+                            vk_input_attributes[i].offset = stride;
+                            stride += inputs[i].stride;
+                        }
+
+                        vk_binding_descriptions.push(vk::VertexInputBindingDescription {
+                            binding: vk_input_attributes[l].binding,
+                            stride,
+                            input_rate: vk::VertexInputRate::VERTEX,
+                        });
+
+                        l = r;
+                    }
+
+                    (vk_input_attributes, vk_binding_descriptions)
+                };
+                let vertex_input_state = ash::vk::PipelineVertexInputStateCreateInfo {
+                    vertex_binding_description_count: vertex_input_binding_descriptions.len()
+                        as u32,
+                    p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
+                    vertex_attribute_description_count: vertex_input_attribute_descriptions.len()
+                        as u32,
+                    p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
+                    ..Default::default()
+                };
+                let input_assembly_state = ash::vk::PipelineInputAssemblyStateCreateInfo {
+                    topology: ash::vk::PrimitiveTopology::TRIANGLE_LIST,
+                    primitive_restart_enable: ash::vk::FALSE,
+                    ..Default::default()
+                };
+                let viewport_state = ash::vk::PipelineViewportStateCreateInfo {
+                    viewport_count: 1,
+                    p_viewports: std::ptr::null(), // Since dynamic viewports is enabled this can be null
+                    scissor_count: 1,
+                    p_scissors: std::ptr::null(), // this is also be dynamic
+                    ..Default::default()
+                };
+                let rasterization_state = ash::vk::PipelineRasterizationStateCreateInfo {
+                    depth_clamp_enable: ash::vk::FALSE,
+                    rasterizer_discard_enable: ash::vk::FALSE,
+                    polygon_mode: ash::vk::PolygonMode::FILL,
+                    cull_mode: ash::vk::CullModeFlags::NONE,
+                    front_face: ash::vk::FrontFace::CLOCKWISE,
+                    depth_bias_enable: ash::vk::FALSE,
+                    depth_bias_constant_factor: 0.0,
+                    depth_bias_clamp: 0.0,
+                    depth_bias_slope_factor: 0.0,
+                    line_width: 1.0, // dyamic states is on and VK_DYNAMIC_STATE_LINE_WIDTH is not
+                    ..Default::default()
+                };
+                let multisample_state = ash::vk::PipelineMultisampleStateCreateInfo {
+                    rasterization_samples: ash::vk::SampleCountFlags::TYPE_1,
+                    sample_shading_enable: ash::vk::FALSE,
+                    ..Default::default()
+                };
+                let depth_stencil_state = ash::vk::PipelineDepthStencilStateCreateInfo {
+                    depth_test_enable: ash::vk::TRUE,
+                    depth_write_enable: ash::vk::TRUE,
+                    depth_compare_op: ash::vk::CompareOp::LESS,
+                    depth_bounds_test_enable: ash::vk::FALSE,
+                    stencil_test_enable: ash::vk::FALSE,
+                    min_depth_bounds: 0.0,
+                    max_depth_bounds: 1.0,
+                    ..Default::default()
+                };
+                let attachments = [ash::vk::PipelineColorBlendAttachmentState {
+                    blend_enable: ash::vk::FALSE,
+                    src_color_blend_factor: ash::vk::BlendFactor::ZERO,
+                    dst_color_blend_factor: ash::vk::BlendFactor::ZERO,
+                    color_blend_op: ash::vk::BlendOp::ADD,
+                    src_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
+                    dst_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
+                    alpha_blend_op: ash::vk::BlendOp::ADD,
+                    color_write_mask: ash::vk::ColorComponentFlags::RGBA,
+                }];
+                let color_blend_state = ash::vk::PipelineColorBlendStateCreateInfo {
+                    logic_op_enable: ash::vk::FALSE,
+                    logic_op: ash::vk::LogicOp::COPY,
+                    attachment_count: attachments.len() as u32,
+                    p_attachments: attachments.as_ptr(),
+                    blend_constants: [0.0, 0.0, 0.0, 0.0],
+                    ..Default::default()
+                };
+                let dynamic_states = [
+                    ash::vk::DynamicState::VIEWPORT,
+                    ash::vk::DynamicState::SCISSOR,
+                ];
+                let dynamic_state = ash::vk::PipelineDynamicStateCreateInfo {
+                    dynamic_state_count: dynamic_states.len() as u32,
+                    p_dynamic_states: dynamic_states.as_ptr(),
+                    ..Default::default()
+                };
+                let pipeline_rendering_info = vk::PipelineRenderingCreateInfo {
+                    color_attachment_count: color_formats.len() as u32,
+                    p_color_attachment_formats: color_formats.as_ptr(),
+                    depth_attachment_format: *depth_format,
+                    stencil_attachment_format: *stencil_format,
+                    ..Default::default()
+                };
+                let pipeline_create_info = ash::vk::GraphicsPipelineCreateInfo {
+                    p_next: &pipeline_rendering_info as *const _ as *const std::ffi::c_void,
+                    stage_count: stages.len() as u32,
+                    p_stages: stages.as_ptr(),
+                    p_vertex_input_state: &vertex_input_state,
+                    p_input_assembly_state: &input_assembly_state,
+                    p_tessellation_state: std::ptr::null(),
+                    p_viewport_state: &viewport_state,
+                    p_rasterization_state: &rasterization_state,
+                    p_multisample_state: &multisample_state,
+                    p_depth_stencil_state: &depth_stencil_state,
+                    p_color_blend_state: &color_blend_state,
+                    p_dynamic_state: &dynamic_state,
+                    layout: layout.handle,
+                    render_pass: ash::vk::RenderPass::null(), // dynamic rendering is enabled
+                    subpass: 0,
+                    ..Default::default()
+                };
+
+                let pipelines = unsafe {
+                    device.create_graphics_pipelines(
+                        ash::vk::PipelineCache::null(),
+                        &[pipeline_create_info],
+                    )
+                }
+                .map_err(|(_, vk_err)| vk_err)
+                .inspect_err(|e| trace_error!(e))?;
 
                 Ok(Pipeline {
                     device,
-                    layout: pipeline_layout,
-                    pipeline,
+                    layout: layout.clone(),
+                    pipeline: pipelines[0],
                 })
             }
         }
@@ -565,12 +547,14 @@ impl Pipeline {
 
     pub unsafe fn bind(&self, command_buffer: vk::CommandBuffer) {
         unsafe {
-            self.device.cmd_bind_pipeline(
-                command_buffer,
-                vk::PipelineBindPoint::GRAPHICS,
-                self.pipeline,
-            )
+            self.device
+                .cmd_bind_pipeline(command_buffer, self.layout.bind_point, self.pipeline)
         }
+    }
+
+    #[inline]
+    pub fn get_layout(&self) -> &PipelineLayout {
+        &self.layout
     }
 }
 

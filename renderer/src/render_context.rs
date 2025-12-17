@@ -3,6 +3,7 @@ use crate::trace_error;
 use ash::vk;
 use std::rc::Rc;
 
+#[allow(dead_code)]
 pub struct RenderContext {
     swapchain: vulkan::swapchain::Swapchain,
     device: Rc<vulkan::device::Device>,
@@ -12,20 +13,34 @@ pub struct RenderContext {
     command_infos: Box<[(vk::CommandPool, vk::CommandBuffer)]>,
     depth_images: Box<[vulkan::image::Image]>,
     pipeline: Rc<vulkan::pipeline::Pipeline>,
+    per_frame_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+    per_frame_uniform_buffers: Box<[vulkan::buffer::BufferView]>,
+    other_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+    // keeps image alive as long as render context is alive
+    image: Rc<vulkan::image::Image>,
     index: usize,
 }
+
+pub const MAX_FRAME_COUNT: usize = 3;
 
 impl RenderContext {
     pub fn new(
         device: Rc<vulkan::device::Device>,
         window: &winit::window::Window,
-    ) -> vulkan::result::Result<RenderContext> {
+        vertex_shader_path: &std::path::Path,
+        fragment_shader_path: &std::path::Path,
+        pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
+        per_frame_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+        per_frame_uniform_buffers: Box<[vulkan::buffer::BufferView]>,
+        other_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+        image: Rc<vulkan::image::Image>,
+    ) -> crate::result::Result<RenderContext> {
         let swapchain = vulkan::swapchain::Swapchain::new(device.clone(), window)
             .inspect_err(|e| trace_error!(e))?;
 
         let command_buffer_executed = {
-            let mut fences: Vec<vk::Fence> = Vec::with_capacity(swapchain.get_image_count());
-            for _ in 0..swapchain.get_image_count() {
+            let mut fences: Vec<vk::Fence> = Vec::with_capacity(MAX_FRAME_COUNT);
+            for _ in 0..MAX_FRAME_COUNT {
                 let fence_create_info = ash::vk::FenceCreateInfo {
                     flags: vk::FenceCreateFlags::SIGNALED,
                     ..Default::default()
@@ -46,9 +61,9 @@ impl RenderContext {
         };
 
         let (image_acquired, render_complete) = {
-            let mut semaphores = Vec::with_capacity(swapchain.get_image_count() * 2);
+            let mut semaphores = Vec::with_capacity(swapchain.get_image_count() + MAX_FRAME_COUNT);
 
-            for _ in 0..(swapchain.get_image_count() * 2) {
+            for _ in 0..(swapchain.get_image_count() + MAX_FRAME_COUNT) {
                 let semaphore_create_info = vk::SemaphoreCreateInfo {
                     ..Default::default()
                 };
@@ -67,21 +82,19 @@ impl RenderContext {
                 semaphores.push(semaphore);
             }
 
-            let completed = semaphores
-                .split_off(swapchain.get_image_count())
-                .into_boxed_slice();
+            let completed = semaphores.split_off(MAX_FRAME_COUNT).into_boxed_slice();
 
             (semaphores.into_boxed_slice(), completed)
         };
 
         let command_infos = {
-            let mut infos = Vec::with_capacity(swapchain.get_image_count());
+            let mut infos = Vec::with_capacity(MAX_FRAME_COUNT);
 
-            for _ in 0..swapchain.get_image_count() {
+            for _ in 0..MAX_FRAME_COUNT {
                 let pool = {
                     let pool_create_info = vk::CommandPoolCreateInfo {
                         flags: vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER,
-                        queue_family_index: 0,
+                        queue_family_index: device.get_queue_family_index(),
                         ..Default::default()
                     };
 
@@ -100,7 +113,7 @@ impl RenderContext {
                         }
                     })?
                 };
-                let buffers = {
+                let buffer = {
                     let buffer_allocate_info = ash::vk::CommandBufferAllocateInfo {
                         command_pool: pool,
                         command_buffer_count: 1,
@@ -108,8 +121,8 @@ impl RenderContext {
                         ..Default::default()
                     };
 
-                    unsafe { device.allocate_command_buffers(&buffer_allocate_info) }.inspect_err(
-                        |e| {
+                    let buffers = unsafe { device.allocate_command_buffers(&buffer_allocate_info) }
+                        .inspect_err(|e| {
                             trace_error!(e);
                             unsafe {
                                 device.destroy_command_pool(pool);
@@ -127,11 +140,12 @@ impl RenderContext {
                                     device.destroy_fence(*fence);
                                 }
                             }
-                        },
-                    )?
+                        })?;
+
+                    buffers[0]
                 };
 
-                infos.push((pool, buffers[0]));
+                infos.push((pool, buffer));
             }
 
             infos.into_boxed_slice()
@@ -146,6 +160,8 @@ impl RenderContext {
             let mut images = Vec::with_capacity(swapchain.get_image_count());
 
             let depth_image_create_info = vulkan::image::ImageCreateInfo {
+                memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
                 mip_levels: 1,
                 image_type: vk::ImageType::TYPE_2D,
                 format: depth_stencil_format,
@@ -181,14 +197,11 @@ impl RenderContext {
 
             images.into_boxed_slice()
         };
-
         let pipeline = {
             let (spv_vertex_shader_module, vk_vertex_shader_module) = unsafe {
-                vulkan::pipeline::create_shader_modules(
-                    device.clone(),
-                    String::from("shaders/compiled/shader.vert.spv"),
-                )
-            }.inspect_err(|e| {
+                vulkan::pipeline::create_shader_modules(device.clone(), vertex_shader_path)
+            }
+            .inspect_err(|e| {
                 trace_error!(e);
                 unsafe {
                     for (pool, buffer) in command_infos.iter() {
@@ -207,10 +220,7 @@ impl RenderContext {
                 }
             })?;
             let (spv_frag_shader_module, vk_frag_shader_module) = unsafe {
-                vulkan::pipeline::create_shader_modules(
-                    device.clone(),
-                    String::from("shaders/compiled/shader.frag.spv"),
-                )
+                vulkan::pipeline::create_shader_modules(device.clone(), fragment_shader_path)
             }
             .inspect_err(|e| {
                 trace_error!(e);
@@ -231,37 +241,39 @@ impl RenderContext {
                     }
                 }
             })?;
+
             let color_formats = Rc::new([swapchain.get_format()]);
             let pipeline_create_info = vulkan::pipeline::PipelineCreateInfo::Graphics {
                 vk_vertex_shader_module,
                 spv_vertex_shader_module,
                 vk_frag_shader_module,
                 spv_frag_shader_module,
+                layout: pipeline_layout,
                 color_formats,
                 depth_format: depth_stencil_format,
                 stencil_format: depth_stencil_format,
             };
             let pipeline = vulkan::pipeline::Pipeline::new(device.clone(), &pipeline_create_info)
                 .inspect_err(|e| {
-                    trace_error!(e);
-                    unsafe {
-                        device.destroy_shader_module(vk_frag_shader_module);
-                        device.destroy_shader_module(vk_vertex_shader_module);
-                        for (pool, buffer) in command_infos.iter() {
-                            device.free_command_buffers(*pool, &[*buffer]);
-                            device.destroy_command_pool(*pool);
-                        }
-                        for semaphore in image_acquired.iter() {
-                            device.destroy_semaphore(*semaphore);
-                        }
-                        for semaphore in render_complete.iter() {
-                            device.destroy_semaphore(*semaphore);
-                        }
-                        for fence in command_buffer_executed.iter() {
-                            device.destroy_fence(*fence);
-                        }
+                trace_error!(e);
+                unsafe {
+                    device.destroy_shader_module(vk_frag_shader_module);
+                    device.destroy_shader_module(vk_vertex_shader_module);
+                    for (pool, buffer) in command_infos.iter() {
+                        device.free_command_buffers(*pool, &[*buffer]);
+                        device.destroy_command_pool(*pool);
                     }
-                })?;
+                    for semaphore in image_acquired.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for semaphore in render_complete.iter() {
+                        device.destroy_semaphore(*semaphore);
+                    }
+                    for fence in command_buffer_executed.iter() {
+                        device.destroy_fence(*fence);
+                    }
+                }
+            })?;
 
             unsafe {
                 device.destroy_shader_module(vk_vertex_shader_module);
@@ -270,6 +282,7 @@ impl RenderContext {
 
             Rc::new(pipeline)
         };
+
         Ok(RenderContext {
             device,
             swapchain,
@@ -279,6 +292,10 @@ impl RenderContext {
             command_infos,
             depth_images,
             pipeline,
+            per_frame_descriptor_sets,
+            per_frame_uniform_buffers,
+            other_descriptor_sets,
+            image,
             index: 0,
         })
     }
@@ -307,6 +324,28 @@ impl Drop for RenderContext {
 }
 
 impl RenderContext {
+    pub fn update_current_camera(&mut self, camera: &crate::camera::CameraUBO) {
+        match &self.per_frame_uniform_buffers[self.index] {
+            vulkan::buffer::BufferView::Uniform {
+                buffer,
+                offset,
+                size,
+            } => unsafe {
+                let dst = buffer.map_memory(*offset, *size).unwrap();
+                let src = [camera.clone()];
+
+                std::ptr::copy_nonoverlapping(
+                    src.as_ptr(),
+                    dst as *mut crate::camera::CameraUBO,
+                    1,
+                );
+
+                buffer.unmap();
+            },
+            _ => {}
+        }
+    }
+
     pub unsafe fn draw<F>(&mut self, record_draw_commands: F) -> vulkan::result::Result<()>
     where
         F: FnOnce(vk::CommandBuffer),
@@ -327,14 +366,13 @@ impl RenderContext {
                 self.device
                     .reset_fences(&[self.command_buffer_executed[self.index]])?
             };
-
             (
                 image_index as usize,
                 self.swapchain.get_image_view(image_index as usize).unwrap(),
             )
         };
 
-        let (_, command_buffer) = self.command_infos.get(swapchain_image_index).unwrap();
+        let (_, command_buffer) = self.command_infos.get(self.index).unwrap();
 
         // Begin command buffer
         let begin_info = vk::CommandBufferBeginInfo {
@@ -461,6 +499,17 @@ impl RenderContext {
                 self.device.cmd_set_scissor(*command_buffer, 0, &[scissor]);
 
                 self.pipeline.bind(*command_buffer);
+
+                self.device.cmd_bind_descriptor_sets(
+                    *command_buffer,
+                    self.pipeline.get_layout(),
+                    0,
+                    &[
+                        self.per_frame_descriptor_sets[self.index].handle,
+                        self.other_descriptor_sets[0].handle,
+                    ],
+                    &[],
+                );
             };
         }
 
@@ -473,16 +522,16 @@ impl RenderContext {
 
         // Barrier to transition for pres
         {
-            let to_present = ash::vk::ImageMemoryBarrier2 {
-                src_stage_mask: ash::vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
-                src_access_mask: ash::vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
-                dst_stage_mask: ash::vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
-                dst_access_mask: ash::vk::AccessFlags2::empty(),
-                old_layout: ash::vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
-                new_layout: ash::vk::ImageLayout::PRESENT_SRC_KHR,
+            let to_present = vk::ImageMemoryBarrier2 {
+                src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
+                src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
+                dst_stage_mask: vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
+                dst_access_mask: vk::AccessFlags2::empty(),
+                old_layout: vk::ImageLayout::COLOR_ATTACHMENT_OPTIMAL,
+                new_layout: vk::ImageLayout::PRESENT_SRC_KHR,
                 image: *self.swapchain.get_image(swapchain_image_index).unwrap(),
-                subresource_range: ash::vk::ImageSubresourceRange {
-                    aspect_mask: ash::vk::ImageAspectFlags::COLOR,
+                subresource_range: vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
                     level_count: 1,
                     base_array_layer: 0,
@@ -490,7 +539,7 @@ impl RenderContext {
                 },
                 ..Default::default()
             };
-            let dependency_info = ash::vk::DependencyInfo {
+            let dependency_info = vk::DependencyInfo {
                 image_memory_barrier_count: 1,
                 p_image_memory_barriers: &to_present,
                 ..Default::default()
@@ -510,12 +559,12 @@ impl RenderContext {
 
         // Submit
         {
-            let wait_stages = [ash::vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
+            let wait_stages = [vk::PipelineStageFlags::COLOR_ATTACHMENT_OUTPUT];
             let wait_semaphores = [self.image_acquired[self.index]];
             let signal_semaphores = [self.render_complete[self.index]];
             let command_buffers = [*command_buffer];
 
-            let submit_info = ash::vk::SubmitInfo {
+            let submit_info = vk::SubmitInfo {
                 wait_semaphore_count: wait_semaphores.len() as u32,
                 p_wait_semaphores: wait_semaphores.as_ptr(),
                 p_wait_dst_stage_mask: wait_stages.as_ptr(),
@@ -533,8 +582,8 @@ impl RenderContext {
                 )?
             };
 
-            let present_wait_semaphores = [signal_semaphores[0]];
-            let present_info = ash::vk::PresentInfoKHR {
+            let present_wait_semaphores = signal_semaphores;
+            let present_info = vk::PresentInfoKHR {
                 wait_semaphore_count: present_wait_semaphores.len() as u32,
                 p_wait_semaphores: present_wait_semaphores.as_ptr(),
                 swapchain_count: 1,
@@ -546,7 +595,11 @@ impl RenderContext {
         }
 
         self.index += 1;
-        self.index %= self.swapchain.get_image_count();
+        let max_frames = match self.swapchain.get_present_mode() {
+            vk::PresentModeKHR::MAILBOX => 3,
+            _ => 2,
+        };
+        self.index %= max_frames;
 
         Ok(())
     }

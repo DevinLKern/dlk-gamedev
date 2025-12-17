@@ -13,6 +13,8 @@ macro_rules! trace_error {
 #[derive(Debug)]
 pub enum Error {
     VulkanError(vulkan::result::Error),
+    SpirvError(spirv::result::Error),
+    ExpectedUniformBufferView,
     NotAdded,
 }
 
@@ -29,6 +31,18 @@ impl From<ash::vk::Result> for Error {
     #[inline]
     fn from(value: ash::vk::Result) -> Self {
         Self::VulkanError(value.into())
+    }
+}
+
+impl From<vulkan::result::Error> for Error {
+    fn from(value: vulkan::result::Error) -> Self {
+        Self::VulkanError(value)
+    }
+}
+
+impl From<spirv::result::Error> for Error {
+    fn from(value: spirv::result::Error) -> Self {
+        Self::SpirvError(value)
     }
 }
 

@@ -14,6 +14,7 @@ pub struct Image {
 
 #[allow(dead_code)]
 pub struct ImageCreateInfo {
+    pub memory_property_flags: ash::vk::MemoryPropertyFlags,
     pub mip_levels: u32,
     pub image_type: ash::vk::ImageType,
     pub format: ash::vk::Format,
