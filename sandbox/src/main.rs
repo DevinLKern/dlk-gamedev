@@ -144,8 +144,12 @@ impl Application {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
-                self.camera = camera::CameraUBO::new(self.model_anlge[0], self.model_anlge[1], self.model_anlge[2]);
-                context.update_current_camera(&self.camera);                
+                self.camera = camera::CameraUBO::new(
+                    self.model_anlge[0],
+                    self.model_anlge[1],
+                    self.model_anlge[2],
+                );
+                context.update_current_camera(&self.camera);
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
                 let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
@@ -160,28 +164,24 @@ impl Application {
             winit::event::WindowEvent::KeyboardInput { event, .. } => {
                 const ANGLE: f32 = 0.1;
                 match event {
-                    winit::event::KeyEvent { physical_key, .. } => {
-                        match physical_key {
-                            winit::keyboard::PhysicalKey::Code(c) => {
-                                match c {
-                                    winit::keyboard::KeyCode::ArrowUp => {
-                                        self.model_anlge[0] += ANGLE;
-                                    }
-                                    winit::keyboard::KeyCode::ArrowDown => {
-                                        self.model_anlge[0] -= ANGLE;
-                                    }
-                                    winit::keyboard::KeyCode::ArrowLeft => {
-                                        self.model_anlge[1] += ANGLE;
-                                    }
-                                    winit::keyboard::KeyCode::ArrowRight => {
-                                        self.model_anlge[1] -= ANGLE;
-                                    }
-                                    _ => {}
-                                }
+                    winit::event::KeyEvent { physical_key, .. } => match physical_key {
+                        winit::keyboard::PhysicalKey::Code(c) => match c {
+                            winit::keyboard::KeyCode::ArrowUp => {
+                                self.model_anlge[0] += ANGLE;
+                            }
+                            winit::keyboard::KeyCode::ArrowDown => {
+                                self.model_anlge[0] -= ANGLE;
+                            }
+                            winit::keyboard::KeyCode::ArrowLeft => {
+                                self.model_anlge[1] += ANGLE;
+                            }
+                            winit::keyboard::KeyCode::ArrowRight => {
+                                self.model_anlge[1] -= ANGLE;
                             }
                             _ => {}
-                        }
-                    }
+                        },
+                        _ => {}
+                    },
                 }
                 window.request_redraw();
                 // println!("Keyboard Input!");
@@ -331,15 +331,18 @@ impl ApplicationHandler for Application {
 fn main() -> Result<()> {
     let img_path = {
         let args: Vec<String> = std::env::args().collect();
-        if args.len() != 3 {
+        if args.len() < 3 {
+            for arg in args.iter() {
+                println!("{}", arg);
+            }
             let e = result::Error::IncorrectProgramUsage;
             println!("{}", e);
             return Err(e);
         }
 
-        std::env::set_current_dir(args[1].clone())?;
+        std::env::set_current_dir(args[args.len() - 2].clone())?;
 
-        std::path::PathBuf::from(args[2].clone())
+        std::path::PathBuf::from(args[args.len() - 1].clone())
     };
     let event_loop = EventLoop::new()?;
 

@@ -899,6 +899,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "math"
+version = "0.1.0"
+
+[[package]]
 name = "maybe-rayon"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1615,6 +1619,7 @@ dependencies = [
  "ash",
  "ash-window",
  "image",
+ "math",
  "spirv",
  "vulkan",
  "winit",

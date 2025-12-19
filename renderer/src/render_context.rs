@@ -424,9 +424,11 @@ impl RenderContext {
                 },
                 ..Default::default()
             };
+
+            let dependencies = [color_barrier, depth_barrier];
             let dependency_info = vk::DependencyInfo {
-                image_memory_barrier_count: 2,
-                p_image_memory_barriers: [color_barrier, depth_barrier].as_ptr(),
+                image_memory_barrier_count: dependencies.len() as u32,
+                p_image_memory_barriers: dependencies.as_ptr(),
                 ..Default::default()
             };
             unsafe {
@@ -522,7 +524,7 @@ impl RenderContext {
 
         // Barrier to transition for pres
         {
-            let to_present = vk::ImageMemoryBarrier2 {
+            let dependencies = [vk::ImageMemoryBarrier2 {
                 src_stage_mask: vk::PipelineStageFlags2::COLOR_ATTACHMENT_OUTPUT,
                 src_access_mask: vk::AccessFlags2::COLOR_ATTACHMENT_WRITE,
                 dst_stage_mask: vk::PipelineStageFlags2::BOTTOM_OF_PIPE,
@@ -538,10 +540,10 @@ impl RenderContext {
                     layer_count: 1,
                 },
                 ..Default::default()
-            };
+            }];
             let dependency_info = vk::DependencyInfo {
-                image_memory_barrier_count: 1,
-                p_image_memory_barriers: &to_present,
+                image_memory_barrier_count: dependencies.len() as u32,
+                p_image_memory_barriers: dependencies.as_ptr(),
                 ..Default::default()
             };
 

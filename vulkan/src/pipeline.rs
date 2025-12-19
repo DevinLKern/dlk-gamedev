@@ -1,6 +1,9 @@
-use crate::result::{Error, Result};
 use crate::trace_error;
-use ash::prelude::VkResult;
+use crate::{
+    descriptor::DescriptorSetLayout,
+    device::Device,
+    result::{Error, Result},
+};
 use ash::vk;
 use spirv;
 use std::collections::HashMap;
@@ -44,27 +47,14 @@ fn spirv_type_to_vk_format(spirv_type: &spirv::ShaderIoType) -> vk::Format {
             (spirv::ScalarType::Float, 32, 3) => vk::Format::R32G32B32_SFLOAT,
             (spirv::ScalarType::Float, 32, 4) => vk::Format::R32G32B32A32_SFLOAT,
 
-            _ => ash::vk::Format::UNDEFINED,
+            _ => vk::Format::UNDEFINED,
         },
-        _ => ash::vk::Format::UNDEFINED,
-    }
-}
-
-fn spirv_uniform_type_to_vk_descriptor_type(
-    uniform_type: &spirv::UniformType,
-) -> ash::vk::DescriptorType {
-    match uniform_type {
-        spirv::UniformType::Sampler => vk::DescriptorType::SAMPLER,
-        spirv::UniformType::SampledImage => vk::DescriptorType::COMBINED_IMAGE_SAMPLER, // TODO: fix this. it's VERY questionable.
-        spirv::UniformType::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
-        spirv::UniformType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
-        spirv::UniformType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
-        _ => ash::vk::DescriptorType::UNIFORM_BUFFER,
+        _ => vk::Format::UNDEFINED,
     }
 }
 
 pub unsafe fn create_shader_modules(
-    device: Rc<crate::device::Device>,
+    device: Rc<Device>,
     shader_path: &std::path::Path,
 ) -> Result<(Rc<spirv::ShaderModule>, vk::ShaderModule)> {
     let shader_code = {
@@ -92,120 +82,11 @@ pub unsafe fn create_shader_modules(
     Ok((spv_module, vk_module))
 }
 
-#[allow(dead_code)]
-#[derive(Debug)]
-pub struct DescriptorSetLayoutBindingInfo {
-    pub binding: u32,
-    pub descriptor_type: vk::DescriptorType,
-    pub descriptor_count: u32,
-    pub stage_flags: vk::ShaderStageFlags,
-    pub p_immutable_shader: *const vk::Sampler,
-    pub size: Option<u32>,
-}
-
-impl std::fmt::Display for DescriptorSetLayoutBindingInfo {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{{binding: {}, descriptor_type: {:?}, descriptor_count: {:?}, stage_flags: {:?}, size: {:?}}}",
-            self.binding, self.descriptor_type, self.descriptor_count, self.stage_flags, self.size,
-        )
-    }
-}
-
-// #[derive(Debug)]
-pub struct DescriptorSetLayout {
-    device: Rc<crate::device::Device>,
-    pub set: u32,
-    pub bindings: Box<[DescriptorSetLayoutBindingInfo]>,
-    pub handle: vk::DescriptorSetLayout,
-}
-
-impl DescriptorSetLayout {
-    pub(crate) fn new(
-        device: Rc<crate::device::Device>,
-        set: u32,
-        bindings: &[(vk::ShaderStageFlags, spirv::UniformInfo)],
-    ) -> VkResult<DescriptorSetLayout> {
-        let owned_bindings: Box<[DescriptorSetLayoutBindingInfo]> = bindings
-            .iter()
-            .map(|(f, u)| DescriptorSetLayoutBindingInfo {
-                binding: u.binding,
-                descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
-                descriptor_count: 1,
-                stage_flags: *f,
-                p_immutable_shader: std::ptr::null(),
-                size: u.size,
-            })
-            .collect();
-
-        let handle = {
-            let vk_bindings: Box<[vk::DescriptorSetLayoutBinding<'_>]> = bindings
-                .iter()
-                .map(|(f, u)| vk::DescriptorSetLayoutBinding {
-                    binding: u.binding,
-                    descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
-                    descriptor_count: 1,
-                    stage_flags: *f,
-                    ..Default::default()
-                })
-                .collect();
-            let create_info = vk::DescriptorSetLayoutCreateInfo {
-                binding_count: vk_bindings.len() as u32,
-                p_bindings: vk_bindings.as_ptr(),
-                ..Default::default()
-            };
-            unsafe { device.create_descriptor_set_layout(&create_info) }?
-        };
-
-        Ok(DescriptorSetLayout {
-            device,
-            bindings: owned_bindings,
-            set,
-            handle,
-        })
-    }
-}
-
-impl Drop for DescriptorSetLayout {
-    fn drop(&mut self) {
-        unsafe {
-            self.device.destroy_descriptor_set_layout(self.handle);
-        }
-    }
-}
-
-impl std::fmt::Display for DescriptorSetLayout {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{{bindings: [")?;
-        for binding in self.bindings.iter() {
-            write!(
-                f,
-                "{{binding: {}, descriptor_type: {:?}, descriptor_count: {:?}, stage_flags: {:?}, size: {:?}}}",
-                binding.binding,
-                binding.descriptor_type,
-                binding.descriptor_count,
-                binding.stage_flags,
-                binding.size
-            )?;
-        }
-        write!(f, "], handle: {:?}}}", self.handle)
-    }
-}
-
-pub enum PipelineLayoutCreateInfo {
-    Graphics {
-        vert_spv_module: Rc<spirv::ShaderModule>,
-        frag_spv_module: Rc<spirv::ShaderModule>,
-    },
-    Compute,
-}
-
 pub struct PipelineLayout {
     // maps name to the set number and information about the set
-    device: Rc<crate::device::Device>,
+    device: Rc<Device>,
     pub(crate) bind_point: vk::PipelineBindPoint,
-    set_layouts: Box<[DescriptorSetLayout]>,
+    set_layouts: Box<[crate::descriptor::DescriptorSetLayout]>,
     pub(crate) handle: vk::PipelineLayout,
 }
 
@@ -223,7 +104,7 @@ impl std::fmt::Display for PipelineLayout {
 
 impl PipelineLayout {
     pub fn new_graphics(
-        device: Rc<crate::device::Device>,
+        device: Rc<Device>,
         vert_spv_module: &spirv::ShaderModule,
         frag_spv_module: &spirv::ShaderModule,
     ) -> Result<PipelineLayout> {
@@ -256,7 +137,8 @@ impl PipelineLayout {
 
         let mut set_layouts = Vec::new();
         for (set, infos) in set_infos.into_iter() {
-            let layout = DescriptorSetLayout::new(device.clone(), set, infos.as_slice())?;
+            let layout =
+                crate::descriptor::DescriptorSetLayout::new(device.clone(), set, infos.as_slice())?;
             set_layouts.push(layout);
         }
 
@@ -298,7 +180,7 @@ impl Drop for PipelineLayout {
 
 #[allow(dead_code)]
 pub struct Pipeline {
-    device: Rc<crate::device::Device>,
+    device: Rc<Device>,
     layout: Rc<PipelineLayout>,
     pipeline: vk::Pipeline,
 }
@@ -317,10 +199,7 @@ pub enum PipelineCreateInfo {
 }
 
 impl Pipeline {
-    pub fn new(
-        device: Rc<crate::device::Device>,
-        create_info: &PipelineCreateInfo,
-    ) -> Result<Pipeline> {
+    pub fn new(device: Rc<Device>, create_info: &PipelineCreateInfo) -> Result<Pipeline> {
         match create_info {
             PipelineCreateInfo::Graphics {
                 vk_vertex_shader_module,
@@ -425,7 +304,7 @@ impl Pipeline {
 
                     (vk_input_attributes, vk_binding_descriptions)
                 };
-                let vertex_input_state = ash::vk::PipelineVertexInputStateCreateInfo {
+                let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
                     vertex_binding_description_count: vertex_input_binding_descriptions.len()
                         as u32,
                     p_vertex_binding_descriptions: vertex_input_binding_descriptions.as_ptr(),
@@ -434,69 +313,66 @@ impl Pipeline {
                     p_vertex_attribute_descriptions: vertex_input_attribute_descriptions.as_ptr(),
                     ..Default::default()
                 };
-                let input_assembly_state = ash::vk::PipelineInputAssemblyStateCreateInfo {
-                    topology: ash::vk::PrimitiveTopology::TRIANGLE_LIST,
-                    primitive_restart_enable: ash::vk::FALSE,
+                let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
+                    topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                    primitive_restart_enable: vk::FALSE,
                     ..Default::default()
                 };
-                let viewport_state = ash::vk::PipelineViewportStateCreateInfo {
+                let viewport_state = vk::PipelineViewportStateCreateInfo {
                     viewport_count: 1,
                     p_viewports: std::ptr::null(), // Since dynamic viewports is enabled this can be null
                     scissor_count: 1,
                     p_scissors: std::ptr::null(), // this is also be dynamic
                     ..Default::default()
                 };
-                let rasterization_state = ash::vk::PipelineRasterizationStateCreateInfo {
-                    depth_clamp_enable: ash::vk::FALSE,
-                    rasterizer_discard_enable: ash::vk::FALSE,
-                    polygon_mode: ash::vk::PolygonMode::FILL,
-                    cull_mode: ash::vk::CullModeFlags::NONE,
-                    front_face: ash::vk::FrontFace::CLOCKWISE,
-                    depth_bias_enable: ash::vk::FALSE,
+                let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+                    depth_clamp_enable: vk::FALSE,
+                    rasterizer_discard_enable: vk::FALSE,
+                    polygon_mode: vk::PolygonMode::FILL,
+                    cull_mode: vk::CullModeFlags::NONE,
+                    front_face: vk::FrontFace::CLOCKWISE,
+                    depth_bias_enable: vk::FALSE,
                     depth_bias_constant_factor: 0.0,
                     depth_bias_clamp: 0.0,
                     depth_bias_slope_factor: 0.0,
                     line_width: 1.0, // dyamic states is on and VK_DYNAMIC_STATE_LINE_WIDTH is not
                     ..Default::default()
                 };
-                let multisample_state = ash::vk::PipelineMultisampleStateCreateInfo {
-                    rasterization_samples: ash::vk::SampleCountFlags::TYPE_1,
-                    sample_shading_enable: ash::vk::FALSE,
+                let multisample_state = vk::PipelineMultisampleStateCreateInfo {
+                    rasterization_samples: vk::SampleCountFlags::TYPE_1,
+                    sample_shading_enable: vk::FALSE,
                     ..Default::default()
                 };
-                let depth_stencil_state = ash::vk::PipelineDepthStencilStateCreateInfo {
-                    depth_test_enable: ash::vk::TRUE,
-                    depth_write_enable: ash::vk::TRUE,
-                    depth_compare_op: ash::vk::CompareOp::LESS,
-                    depth_bounds_test_enable: ash::vk::FALSE,
-                    stencil_test_enable: ash::vk::FALSE,
+                let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+                    depth_test_enable: vk::TRUE,
+                    depth_write_enable: vk::TRUE,
+                    depth_compare_op: vk::CompareOp::LESS,
+                    depth_bounds_test_enable: vk::FALSE,
+                    stencil_test_enable: vk::FALSE,
                     min_depth_bounds: 0.0,
                     max_depth_bounds: 1.0,
                     ..Default::default()
                 };
-                let attachments = [ash::vk::PipelineColorBlendAttachmentState {
-                    blend_enable: ash::vk::FALSE,
-                    src_color_blend_factor: ash::vk::BlendFactor::ZERO,
-                    dst_color_blend_factor: ash::vk::BlendFactor::ZERO,
-                    color_blend_op: ash::vk::BlendOp::ADD,
-                    src_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
-                    dst_alpha_blend_factor: ash::vk::BlendFactor::ZERO,
-                    alpha_blend_op: ash::vk::BlendOp::ADD,
-                    color_write_mask: ash::vk::ColorComponentFlags::RGBA,
+                let attachments = [vk::PipelineColorBlendAttachmentState {
+                    blend_enable: vk::FALSE,
+                    src_color_blend_factor: vk::BlendFactor::ZERO,
+                    dst_color_blend_factor: vk::BlendFactor::ZERO,
+                    color_blend_op: vk::BlendOp::ADD,
+                    src_alpha_blend_factor: vk::BlendFactor::ZERO,
+                    dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+                    alpha_blend_op: vk::BlendOp::ADD,
+                    color_write_mask: vk::ColorComponentFlags::RGBA,
                 }];
-                let color_blend_state = ash::vk::PipelineColorBlendStateCreateInfo {
-                    logic_op_enable: ash::vk::FALSE,
-                    logic_op: ash::vk::LogicOp::COPY,
+                let color_blend_state = vk::PipelineColorBlendStateCreateInfo {
+                    logic_op_enable: vk::FALSE,
+                    logic_op: vk::LogicOp::COPY,
                     attachment_count: attachments.len() as u32,
                     p_attachments: attachments.as_ptr(),
                     blend_constants: [0.0, 0.0, 0.0, 0.0],
                     ..Default::default()
                 };
-                let dynamic_states = [
-                    ash::vk::DynamicState::VIEWPORT,
-                    ash::vk::DynamicState::SCISSOR,
-                ];
-                let dynamic_state = ash::vk::PipelineDynamicStateCreateInfo {
+                let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+                let dynamic_state = vk::PipelineDynamicStateCreateInfo {
                     dynamic_state_count: dynamic_states.len() as u32,
                     p_dynamic_states: dynamic_states.as_ptr(),
                     ..Default::default()
@@ -508,7 +384,7 @@ impl Pipeline {
                     stencil_attachment_format: *stencil_format,
                     ..Default::default()
                 };
-                let pipeline_create_info = ash::vk::GraphicsPipelineCreateInfo {
+                let pipeline_create_info = vk::GraphicsPipelineCreateInfo {
                     p_next: &pipeline_rendering_info as *const _ as *const std::ffi::c_void,
                     stage_count: stages.len() as u32,
                     p_stages: stages.as_ptr(),
@@ -522,14 +398,14 @@ impl Pipeline {
                     p_color_blend_state: &color_blend_state,
                     p_dynamic_state: &dynamic_state,
                     layout: layout.handle,
-                    render_pass: ash::vk::RenderPass::null(), // dynamic rendering is enabled
+                    render_pass: vk::RenderPass::null(), // dynamic rendering is enabled
                     subpass: 0,
                     ..Default::default()
                 };
 
                 let pipelines = unsafe {
                     device.create_graphics_pipelines(
-                        ash::vk::PipelineCache::null(),
+                        vk::PipelineCache::null(),
                         &[pipeline_create_info],
                     )
                 }
