@@ -2,6 +2,8 @@ pub mod camera;
 pub mod render_context;
 pub mod result;
 
+use math::matrices::{Identity, Mat4};
+
 use ash::vk;
 use std::rc::Rc;
 
@@ -162,7 +164,11 @@ impl Renderer {
                     size,
                 } => unsafe {
                     let dst = buffer.map_memory(*offset, *size)?;
-                    let data = camera::CameraUBO::new(0.0, 0.0, 0.0);
+                    let data = camera::CameraUBO {
+                        model: Mat4::identity(),
+                        view: Mat4::identity(),
+                        proj: Mat4::identity(),
+                    };
 
                     std::ptr::copy_nonoverlapping(&data, dst as *mut camera::CameraUBO, 1);
 

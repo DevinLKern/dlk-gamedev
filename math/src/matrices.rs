@@ -1,8 +1,23 @@
+use crate::numbers::{One, Zero};
 use crate::vectors::*;
-use crate::numbers::{Zero, One};
 
 pub trait Identity {
     fn identity() -> Self;
+}
+
+pub trait Scale {
+    type Input;
+    fn scale(input: Self::Input) -> Self;
+}
+
+pub trait Translation {
+    type Input;
+    fn translation(input: Self::Input) -> Self;
+}
+
+pub trait Rotation {
+    type Input;
+    fn rotation(input: Self::Input) -> Self;
 }
 
 #[allow(dead_code)]
@@ -18,10 +33,7 @@ impl<T: Default> Default for Mat2<T> {
 
 impl<T: Zero + One> Identity for Mat2<T> {
     fn identity() -> Self {
-        Self([
-            Vec2([T::one(), T::zero()]),
-            Vec2([T::zero(), T::one()]),
-        ])
+        Self([Vec2([T::one(), T::zero()]), Vec2([T::zero(), T::one()])])
     }
 }
 
@@ -161,7 +173,7 @@ impl<T> std::ops::IndexMut<usize> for Mat3Std140<T> {
 
 #[allow(dead_code)]
 #[repr(transparent)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Mat4<T>([Vec4<T>; 4]);
 
 impl<T: Default> Default for Mat4<T> {
@@ -181,7 +193,46 @@ impl<T: Zero + One> Identity for Mat4<T> {
             Vec4([T::one(), T::zero(), T::zero(), T::zero()]),
             Vec4([T::zero(), T::one(), T::zero(), T::zero()]),
             Vec4([T::zero(), T::zero(), T::one(), T::zero()]),
-            Vec4([T::zero(), T::zero(), T::zero(), T::one()])
+            Vec4([T::zero(), T::zero(), T::zero(), T::one()]),
+        ])
+    }
+}
+
+impl<T: One + Zero + Copy> Scale for Mat4<T> {
+    type Input = Vec3<T>;
+    fn scale(input: Self::Input) -> Self {
+        Self([
+            Vec4([input[0], T::zero(), T::zero(), T::zero()]),
+            Vec4([T::zero(), input[1], T::zero(), T::zero()]),
+            Vec4([T::zero(), T::zero(), input[2], T::zero()]),
+            Vec4([T::zero(), T::zero(), T::zero(), T::one()]),
+        ])
+    }
+}
+
+impl<T: Zero + One + Copy> Translation for Mat4<T> {
+    type Input = Vec3<T>;
+    fn translation(input: Self::Input) -> Self {
+        Self([
+            Vec4([T::one(), T::zero(), T::zero(), T::zero()]),
+            Vec4([T::zero(), T::one(), T::zero(), T::zero()]),
+            Vec4([T::zero(), T::zero(), T::one(), T::zero()]),
+            Vec4([input[0], input[1], input[2], T::one()]),
+        ])
+    }
+}
+
+impl Rotation for Mat4<f32> {
+    type Input = Vec3<f32>;
+    fn rotation(input: Self::Input) -> Self {
+        let (sx, cx) = input[0].sin_cos();
+        let (sy, cy) = input[1].sin_cos();
+        let (sz, cz) = input[2].sin_cos();
+        Self([
+            Vec4([cy * cx, cy * sx, -sy, 0.0]),
+            Vec4([sz * sy * cx - cz * sx, sz * sy * sx + cz * cx, sz * cy, 0.0]),
+            Vec4([cz * sy * cx + sz * sx, cz * sy * sx - sz * cx, cz * cy, 0.0]),
+            Vec4([0.0, 0.0, 0.0, 1.0]),
         ])
     }
 }

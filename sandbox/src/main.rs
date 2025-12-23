@@ -39,8 +39,8 @@ struct Application {
     vertex_buffer: Rc<vulkan::buffer::BufferView>,
     index_buffer: Rc<vulkan::buffer::BufferView>,
     image: Rc<vulkan::image::Image>,
-    model_anlge: [f32; 3],
-    camera: renderer::camera::CameraUBO,
+    model_anlge: math::vectors::Vec3<f32>,
+    camera: camera::Camera,
     exiting: bool,
 }
 
@@ -107,7 +107,6 @@ impl Application {
             renderer.create_image(image_data)?
         };
 
-        let camera = renderer::camera::CameraUBO::new(0.0, 0.0, 0.0);
         Ok(Self {
             renderer,
             windows: std::collections::HashMap::new(),
@@ -115,8 +114,8 @@ impl Application {
             index_buffer,
             image,
             exiting: false,
-            camera,
-            model_anlge: [0.0, 0.0, 0.0],
+            model_anlge: math::vectors::Vec3::default(),
+            camera: camera::Camera::new(),
         })
     }
 }
@@ -144,12 +143,12 @@ impl Application {
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
-                self.camera = camera::CameraUBO::new(
-                    self.model_anlge[0],
-                    self.model_anlge[1],
-                    self.model_anlge[2],
+                let camera_ubo = self.camera.calculate_ubo(
+                    math::vectors::Vec3::new(0.0, 0.0, -1.0),
+                    math::vectors::Vec3::new(1.0, 1.0, 1.0),
+                    self.model_anlge.clone(),
                 );
-                context.update_current_camera(&self.camera);
+                context.update_current_camera(&camera_ubo);
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
                 let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
