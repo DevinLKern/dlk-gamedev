@@ -1,7 +1,25 @@
 use crate::trace_error;
 
+use math::mat4::Mat4;
+use math::vec2::Vec2;
+use math::vec3::Vec3;
+
 use ash::vk;
 use std::rc::Rc;
+
+#[repr(C)]
+pub struct Vertex {
+    pub position: Vec3<f32>,
+    pub tex_coord: Vec2<f32>,
+}
+
+#[repr(C)]
+#[derive(Clone)]
+pub struct CameraUBO {
+    pub model: Mat4<f32>,
+    pub view: Mat4<f32>,
+    pub proj: Mat4<f32>,
+}
 
 #[allow(dead_code)]
 pub struct RenderContext {
@@ -324,7 +342,7 @@ impl Drop for RenderContext {
 }
 
 impl RenderContext {
-    pub fn update_current_camera(&mut self, camera: &crate::camera::CameraUBO) {
+    pub fn update_current_camera_ubo(&mut self, camera: &CameraUBO) {
         match &self.per_frame_uniform_buffers[self.index] {
             vulkan::buffer::BufferView::Uniform {
                 buffer,
@@ -334,11 +352,7 @@ impl RenderContext {
                 let dst = buffer.map_memory(*offset, *size).unwrap();
                 let src = [camera.clone()];
 
-                std::ptr::copy_nonoverlapping(
-                    src.as_ptr(),
-                    dst as *mut crate::camera::CameraUBO,
-                    1,
-                );
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut CameraUBO, 1);
 
                 buffer.unmap();
             },

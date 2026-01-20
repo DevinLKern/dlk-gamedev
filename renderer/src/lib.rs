@@ -1,8 +1,5 @@
-pub mod camera;
 pub mod render_context;
 pub mod result;
-
-use math::matrices::{Identity, Mat4};
 
 use ash::vk;
 use std::rc::Rc;
@@ -72,6 +69,7 @@ impl Renderer {
     #[inline]
     pub fn create_render_context(
         &self,
+        camera: &crate::render_context::CameraUBO,
         window: &winit::window::Window,
         image: Rc<vulkan::image::Image>,
     ) -> result::Result<render_context::RenderContext> {
@@ -153,7 +151,7 @@ impl Renderer {
 
         // 3 == maximum number of frames?
         let per_frame_uniform_buffers = self.create_per_frame_unifrom_buffers(
-            std::mem::size_of::<camera::CameraUBO>() as u64,
+            std::mem::size_of::<render_context::CameraUBO>() as u64,
             per_frame_descriptor_sets.len() as u64,
         )?;
         for bv in per_frame_uniform_buffers.iter() {
@@ -164,13 +162,9 @@ impl Renderer {
                     size,
                 } => unsafe {
                     let dst = buffer.map_memory(*offset, *size)?;
-                    let data = camera::CameraUBO {
-                        model: Mat4::identity(),
-                        view: Mat4::identity(),
-                        proj: Mat4::identity(),
-                    };
+                    let data = camera;
 
-                    std::ptr::copy_nonoverlapping(&data, dst as *mut camera::CameraUBO, 1);
+                    std::ptr::copy_nonoverlapping(data, dst as *mut render_context::CameraUBO, 1);
 
                     buffer.unmap();
                 },

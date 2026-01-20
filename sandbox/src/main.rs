@@ -1,7 +1,10 @@
+pub mod camera;
+pub mod constants;
 pub mod result;
 
+use camera::Camera;
+
 use ash::vk;
-use renderer::camera;
 use result::Result;
 
 use std::collections::HashMap;
@@ -14,6 +17,12 @@ use winit::{
     window::{Window, WindowId},
 };
 
+use math::traits::Zero;
+use math::vec2::Vec2;
+use math::vec3::Vec3;
+
+use crate::constants::{WORLD_RIGHT, WORLD_UP};
+
 macro_rules! trace_error {
     ($e:expr) => {
         println!(
@@ -25,22 +34,19 @@ macro_rules! trace_error {
     };
 }
 
-#[repr(C)]
-#[derive(Default)]
-pub struct Vertex {
-    position: [f32; 3],
-    tex_coord: [f32; 2],
-}
-
 #[allow(dead_code)]
 struct Application {
-    windows: HashMap<WindowId, (renderer::render_context::RenderContext, Window)>,
+    mouse_sensitivity: f64,
+    focused_window: Option<WindowId>,
+    active_window: Option<WindowId>,
+    windows: HashMap<WindowId, (renderer::render_context::RenderContext, Window, Camera)>,
     renderer: renderer::Renderer,
     vertex_buffer: Rc<vulkan::buffer::BufferView>,
     index_buffer: Rc<vulkan::buffer::BufferView>,
     image: Rc<vulkan::image::Image>,
-    model_anlge: math::vectors::Vec3<f32>,
-    camera: camera::Camera,
+    model_position: Vec3<f32>,
+    model_angle: Vec3<f32>,
+    model_scale: Vec3<f32>,
     exiting: bool,
 }
 
@@ -54,23 +60,27 @@ impl Application {
         let device = vulkan::device::Device::new(instance)?;
         let renderer = renderer::Renderer::new(Rc::new(device))?;
 
-        const F: f32 = 0.75;
+        // const F: f32 = 0.75;
+        const TR: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT);
+        const TL: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT.scaled(-1.0));
+        const BR: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT);
+        const BL: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT.scaled(-1.0));
         let vertex_buffer_data = vec![
-            Vertex {
-                position: [-F, -F, 0.0],
-                tex_coord: [1.0, 0.0],
+            renderer::render_context::Vertex {
+                position: TL,
+                tex_coord: Vec2::new(1.0, 0.0),
             },
-            Vertex {
-                position: [F, -F, 0.0],
-                tex_coord: [0.0, 0.0],
+            renderer::render_context::Vertex {
+                position: TR,
+                tex_coord: Vec2::new(0.0, 0.0),
             },
-            Vertex {
-                position: [F, F, 0.0],
-                tex_coord: [0.0, 1.0],
+            renderer::render_context::Vertex {
+                position: BR,
+                tex_coord: Vec2::new(0.0, 1.0),
             },
-            Vertex {
-                position: [-F, F, 0.0],
-                tex_coord: [1.0, 1.0],
+            renderer::render_context::Vertex {
+                position: BL,
+                tex_coord: Vec2::new(1.0, 1.0),
             },
         ];
         let index_buffer_data = vec![0, 1, 2, 2, 3, 0];
@@ -79,7 +89,8 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     vertex_buffer_data.as_ptr() as *const u8,
-                    vertex_buffer_data.len() * std::mem::size_of::<Vertex>(),
+                    vertex_buffer_data.len()
+                        * std::mem::size_of::<renderer::render_context::Vertex>(),
                 )
             };
 
@@ -89,7 +100,8 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     index_buffer_data.as_ptr() as *const u8,
-                    index_buffer_data.len() * std::mem::size_of::<Vertex>(),
+                    index_buffer_data.len()
+                        * std::mem::size_of::<renderer::render_context::Vertex>(),
                 )
             };
 
@@ -101,21 +113,28 @@ impl Application {
             )?
         };
 
-        let image = {
+        let (image, model_scale) = {
             let image_data = image::open(img_path)?;
 
-            renderer.create_image(image_data)?
+            let image = renderer.create_image(image_data)?;
+            let scale = Vec3::new(image.width as f32, image.height as f32, 0.0).normalized();
+
+            (image, scale)
         };
 
         Ok(Self {
+            mouse_sensitivity: 0.001,
+            focused_window: None,
+            active_window: None,
             renderer,
             windows: std::collections::HashMap::new(),
             vertex_buffer,
             index_buffer,
             image,
             exiting: false,
-            model_anlge: math::vectors::Vec3::default(),
-            camera: camera::Camera::new(),
+            model_position: constants::WORLD_FORWARDS.scaled(0.75),
+            model_angle: Vec3::ZERO,
+            model_scale,
         })
     }
 }
@@ -127,7 +146,7 @@ impl Application {
         event: winit::event::WindowEvent,
         window_id: &winit::window::WindowId,
     ) -> Result<bool> {
-        let (context, window) = self.windows.get_mut(window_id).unwrap();
+        let (context, window, camera) = self.windows.get_mut(window_id).unwrap();
 
         match event {
             winit::event::WindowEvent::CloseRequested => {
@@ -136,19 +155,32 @@ impl Application {
                 return Ok(true);
             }
             winit::event::WindowEvent::Resized(_) => {
-                let new_context = self
-                    .renderer
-                    .create_render_context(window, self.image.clone())?;
+                {
+                    let s = window.inner_size();
+                    let (w, h) = (s.width as f32, s.height as f32);
+                    let aspect_ratio = w / h;
+
+                    camera.set_aspect_ratio(aspect_ratio);
+                }
+
+                let camera_ubo =
+                    camera.calculate_ubo(self.model_position, self.model_scale, self.model_angle);
+                let new_context =
+                    self.renderer
+                        .create_render_context(&camera_ubo, window, self.image.clone())?;
+
                 *context = new_context;
             }
             winit::event::WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
-                let camera_ubo = self.camera.calculate_ubo(
-                    math::vectors::Vec3::new(0.0, 0.0, -1.0),
-                    math::vectors::Vec3::new(1.0, 1.0, 1.0),
-                    self.model_anlge.clone(),
+
+                // the the orthographic view volume's cetner is (0, 0, 0)
+                let camera_ubo = camera.calculate_ubo(
+                    self.model_position,
+                    self.model_scale,
+                    self.model_angle.clone(),
                 );
-                context.update_current_camera(&camera_ubo);
+                context.update_current_camera_ubo(&camera_ubo);
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
                 let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
@@ -159,46 +191,91 @@ impl Application {
                 unsafe {
                     context.draw(record_draw_commands)?;
                 }
+                window.request_redraw();
             }
             winit::event::WindowEvent::KeyboardInput { event, .. } => {
-                const ANGLE: f32 = 0.1;
+                // const ANGLE: f32 = 0.025;
+                const SPEED: f32 = 0.025;
                 match event {
                     winit::event::KeyEvent { physical_key, .. } => match physical_key {
                         winit::keyboard::PhysicalKey::Code(c) => match c {
-                            winit::keyboard::KeyCode::ArrowUp => {
-                                self.model_anlge[0] += ANGLE;
+                            winit::keyboard::KeyCode::Escape => {
+                                self.active_window = None;
+                                match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
+                                    Err(e) => {
+                                        println!("{}", e);
+                                    }
+                                    _ => {}
+                                }
+                                window.set_cursor_visible(true);
                             }
-                            winit::keyboard::KeyCode::ArrowDown => {
-                                self.model_anlge[0] -= ANGLE;
+                            winit::keyboard::KeyCode::KeyE => {
+                                camera.move_local(constants::WORLD_FORWARDS.scaled(SPEED));
                             }
-                            winit::keyboard::KeyCode::ArrowLeft => {
-                                self.model_anlge[1] += ANGLE;
+                            winit::keyboard::KeyCode::KeyD => {
+                                camera.move_local(constants::WORLD_FORWARDS.scaled(-SPEED));
                             }
-                            winit::keyboard::KeyCode::ArrowRight => {
-                                self.model_anlge[1] -= ANGLE;
+                            winit::keyboard::KeyCode::KeyF => {
+                                camera.move_local(constants::WORLD_RIGHT.scaled(SPEED));
                             }
+                            winit::keyboard::KeyCode::KeyS => {
+                                camera.move_local(constants::WORLD_RIGHT.scaled(-SPEED));
+                            }
+                            winit::keyboard::KeyCode::Space => {
+                                camera.move_global(constants::WORLD_UP.scaled(SPEED));
+                            }
+                            winit::keyboard::KeyCode::ControlLeft => {
+                                // this is fine
+                                camera.move_global(constants::WORLD_UP.scaled(-SPEED));
+                            }
+                            // winit::keyboard::KeyCode::ArrowUp => {
+                            //     *self.model_angle.z_mut() += ANGLE;
+                            // }
+                            // winit::keyboard::KeyCode::ArrowDown => {
+                            //     *self.model_angle.z_mut() -= ANGLE;
+                            // }
+                            // winit::keyboard::KeyCode::ArrowLeft => {
+                            //     *self.model_angle.x_mut() += ANGLE;
+                            // }
+                            // winit::keyboard::KeyCode::ArrowRight => {
+                            //     *self.model_angle.x_mut() -= ANGLE;
+                            // }
                             _ => {}
                         },
                         _ => {}
                     },
                 }
-                window.request_redraw();
                 // println!("Keyboard Input!");
             }
             winit::event::WindowEvent::Moved(_) => {
                 println!("Moved!");
             }
-            winit::event::WindowEvent::Focused(_) => {
+            winit::event::WindowEvent::Focused(b) => {
+                if b {
+                    self.focused_window = Some(*window_id);
+                }
                 println!("Focused!");
             }
-            winit::event::WindowEvent::MouseInput { .. } => {
+            winit::event::WindowEvent::MouseInput { button, .. } => {
                 println!("Mouse Input!");
+                match button {
+                    winit::event::MouseButton::Left => {
+                        self.active_window = self.focused_window;
+                        window
+                            .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                            .or_else(|_| {
+                                window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                            })?;
+                        window.set_cursor_visible(false);
+                    }
+                    _ => {}
+                }
             }
             winit::event::WindowEvent::CursorMoved { .. } => {
-                // println!("Cursor Moved!");
+                // println!("Cursor Moved!: {} {}", position.x, position.y);
             }
             winit::event::WindowEvent::AxisMotion { .. } => {
-                println!("AxisMotion");
+                // println!("AxisMotion");
             }
             winit::event::WindowEvent::ActivationTokenDone { .. } => {
                 println!("Activation Token Done");
@@ -223,6 +300,7 @@ impl Application {
             }
             winit::event::WindowEvent::CursorEntered { .. } => {
                 println!("CursorEntered");
+                // window.set_cursor_visible(false);
             }
             winit::event::WindowEvent::Destroyed { .. } => {
                 println!("Destroyed!");
@@ -289,18 +367,52 @@ impl ApplicationHandler for Application {
                 return self.exiting(event_loop);
             }
         };
-        let window_id = window.id();
-        let context = match self
-            .renderer
-            .create_render_context(&window, self.image.clone())
-        {
-            Ok(context) => context,
-            Err(e) => {
-                trace_error!(e);
-                return self.exiting(event_loop);
-            }
+        let camera = {
+            let s = window.inner_size();
+            let (w, h) = (s.width as f32, s.height as f32);
+            let aspect_ratio = w / h;
+
+            camera::Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
         };
-        self.windows.insert(window_id, (context, window));
+        let window_id = window.id();
+        let camera_ubo =
+            camera.calculate_ubo(self.model_position, self.model_scale, self.model_angle);
+        let context =
+            match self
+                .renderer
+                .create_render_context(&camera_ubo, &window, self.image.clone())
+            {
+                Ok(context) => context,
+                Err(e) => {
+                    trace_error!(e);
+                    return self.exiting(event_loop);
+                }
+            };
+        self.windows.insert(window_id, (context, window, camera));
+    }
+
+    #[allow(unused_variables)]
+    fn device_event(
+        &mut self,
+        event_loop: &ActiveEventLoop,
+        device_id: winit::event::DeviceId,
+        event: winit::event::DeviceEvent,
+    ) {
+        match event {
+            winit::event::DeviceEvent::MouseMotion { delta } => {
+                if let Some(window_id) = self.active_window {
+                    let (_, _, camera) = self.windows.get_mut(&window_id).unwrap();
+
+                    let dx = -delta.0 * self.mouse_sensitivity;
+                    let dy = -delta.1 * self.mouse_sensitivity;
+
+                    camera.rotate(dx as f32, dy as f32);
+                }
+            }
+            _ => {
+                // println!("Not implemented")
+            }
+        }
     }
 
     fn window_event(

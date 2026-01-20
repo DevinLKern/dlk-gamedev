@@ -1,5 +1,6 @@
 pub mod allocator;
 pub mod buffer;
+pub mod constants;
 pub mod descriptor;
 pub mod device;
 pub mod image;

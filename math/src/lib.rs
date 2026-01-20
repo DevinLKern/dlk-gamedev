@@ -1,4 +1,7 @@
-pub mod matrices;
-pub mod numbers;
-pub mod quaternions;
-pub mod vectors;
+pub mod mat3;
+pub mod mat4;
+pub mod quat;
+pub mod traits;
+pub mod vec2;
+pub mod vec3;
+pub mod vec4;

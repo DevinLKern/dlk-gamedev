@@ -2,6 +2,7 @@
 pub enum Error {
     IncorrectProgramUsage,
     IoError(std::io::Error),
+    WinitExternalError(winit::error::ExternalError),
     WinitEventLoopError(winit::error::EventLoopError),
     WinitHandleError(winit::raw_window_handle::HandleError),
     VulkanError(vulkan::result::Error),
@@ -17,6 +18,7 @@ impl std::fmt::Display for Error {
                 write!(f, "Incorrect usage. Expects: [working_directory] [image]")
             }
             Self::IoError(e) => write!(f, "IoError: {}", e),
+            Self::WinitExternalError(e) => write!(f, "ExternalError({})", e),
             Self::WinitEventLoopError(e) => write!(f, "EventLoopError({})", e),
             Self::WinitHandleError(e) => write!(f, "HandleError({})", e),
             Self::VulkanError(e) => write!(f, "VulkanError({})", e),
@@ -61,6 +63,12 @@ impl From<renderer::result::Error> for Error {
             renderer::result::Error::VulkanError(e) => Error::VulkanError(e),
             e => Error::RendererError(e),
         }
+    }
+}
+
+impl From<winit::error::ExternalError> for Error {
+    fn from(value: winit::error::ExternalError) -> Self {
+        Error::WinitExternalError(value)
     }
 }
 
