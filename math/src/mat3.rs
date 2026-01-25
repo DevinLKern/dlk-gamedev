@@ -112,14 +112,25 @@ impl<T> Mat3<T> {
 }
 
 impl Mat3<f32> {
+    #[inline]
     pub const fn mul(&self, rhs: &Self) -> Mat3<f32> {
         let (r0, r1, r2) = (self.r0(), self.r1(), self.r2());
 
         Self::from_cols(
-            Vec3::new(r0.dot(&rhs.c0()), r1.dot(&rhs.c0()), r2.dot(&rhs.c0())),
-            Vec3::new(r0.dot(&rhs.c1()), r1.dot(&rhs.c1()), r2.dot(&rhs.c1())),
-            Vec3::new(r0.dot(&rhs.c2()), r1.dot(&rhs.c2()), r2.dot(&rhs.c2())),
+            Vec3::new(r0.dot(rhs.c0()), r1.dot(rhs.c0()), r2.dot(rhs.c0())),
+            Vec3::new(r0.dot(rhs.c1()), r1.dot(rhs.c1()), r2.dot(rhs.c1())),
+            Vec3::new(r0.dot(rhs.c2()), r1.dot(rhs.c2()), r2.dot(rhs.c2())),
         )
+    }
+    #[inline]
+    pub const fn mul_vec(&self, v: Vec3<f32>) -> Vec3<f32> {
+        self.c0().scaled(v.x())
+            .add(self.c1().scaled(v.y()))
+            .add(self.c2().scaled(v.z()))
+    }
+    #[inline]
+    pub const fn transposed(&self) -> Self {
+        Self::from_rows(self.c0(), self.c1(), self.c2())
     }
 }
 
@@ -156,9 +167,10 @@ where
     }
 }
 
+#[cfg(test)]
 mod test {
-    use crate::mat3::Mat3;
-    use crate::vec3::Vec3;
+    use super::Mat3;
+    use super::Vec3;
 
     #[test]
     fn multiplication_scaling() {

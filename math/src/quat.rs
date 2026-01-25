@@ -1,6 +1,6 @@
 use crate::mat3::Mat3;
 use crate::mat4::Mat4;
-use crate::traits::Zero;
+use crate::traits::{Zero, Identity};
 use crate::vec3::Vec3;
 use crate::vec4::Vec4;
 
@@ -9,6 +9,10 @@ use crate::vec4::Vec4;
 pub struct Quat {
     w: f32,
     v: Vec3<f32>,
+}
+
+impl Identity for Quat {
+    const IDENTITY: Self = Self{w: 1.0, v: Vec3::ZERO};
 }
 
 #[allow(dead_code)]
@@ -20,11 +24,11 @@ impl Quat {
 
         Self {
             w: c,
-            v: axis.normalized().scaled(s),
+            v: axis.normalized().scaled(s), // normalized is not const
         }
     }
     #[inline]
-    pub fn from_xyzw(v: Vec4<f32>) -> Self {
+    pub const fn from_xyzw(v: Vec4<f32>) -> Self {
         Self {
             w: v.w(),
             v: Vec3::new(v.x(), v.y(), v.z()),
@@ -99,13 +103,18 @@ impl Quat {
         )
     }
     #[inline]
-    pub const fn calc_mat3(&self) -> Mat3<f32> {
+    pub const fn as_mat3(&self) -> Mat3<f32> {
         self.into_mat3()
     }
-    pub fn into_mat4(self) -> Mat4<f32> {
+    #[inline]
+    pub const fn into_mat4(self) -> Mat4<f32> {
         let mut res = self.into_mat3().into_mat4();
         *res.c3_mut().w_mut() = 1.0;
         return res;
+    }
+    #[inline]
+    pub const fn as_mat4(&self) -> Mat4<f32> {
+        self.into_mat4()
     }
     #[inline]
     pub const fn conjugate(&self) -> Self {
@@ -113,10 +122,6 @@ impl Quat {
             w: self.w,
             v: Vec3::ZERO.sub(self.v),
         }
-    }
-    #[inline]
-    pub fn calc_mat4(&self) -> Mat4<f32> {
-        self.into_mat4()
     }
     #[inline]
     pub const fn length_squared(&self) -> f32 {
@@ -143,7 +148,7 @@ impl Quat {
         }
     }
     // this is shorthand for p * v * p^-1
-    pub fn rotate_vec(&self, v: Vec3<f32>) -> Vec3<f32> {
+    pub const fn rotate_vec(&self, v: Vec3<f32>) -> Vec3<f32> {
         let inv = self.inverse();
         let v = Self { w: 0.0, v: v };
 
@@ -157,7 +162,7 @@ impl Quat {
         }
     }
     #[inline]
-    pub fn inverse(&self) -> Self {
+    pub const fn inverse(&self) -> Self {
         let c = self.conjugate();
         let s = 1.0 / self.length_squared();
 
@@ -171,12 +176,12 @@ impl Quat {
         }
     }
     #[inline]
-    pub fn mul(&self, rhs: Self) -> Self {
-        let w = self.w() * rhs.w() - self.v.dot(&rhs.v);
+    pub const fn mul(&self, rhs: Self) -> Self {
+        let w = self.w() * rhs.w() - self.v.dot(rhs.v);
         let v = self
             .v
             .scaled(rhs.w())
-            .add(rhs.v.scaled(self.w).add(self.v.cross(&rhs.v)));
+            .add(rhs.v.scaled(self.w).add(self.v.cross(rhs.v)));
 
         Self { w, v }
     }
@@ -199,7 +204,7 @@ impl PartialEq for Quat {
 
 #[cfg(test)]
 mod tests {
-    use crate::{quaternion::Quat, vec3::Vec3, vec4::Vec4};
+    use crate::{quat::Quat, vec3::Vec3, vec4::Vec4};
 
     #[test]
     fn angle_axis_tests() {

@@ -121,11 +121,11 @@ impl Vec3<f32> {
         *self.z_mut() -= other.z();
     }
     #[inline]
-    pub const fn dot(&self, other: &Self) -> f32 {
+    pub const fn dot(&self, other: Self) -> f32 {
         self.x() * other.x() + self.y() * other.y() + self.z() * other.z()
     }
     #[inline]
-    pub const fn cross(&self, other: &Self) -> Self {
+    pub const fn cross(&self, other: Self) -> Self {
         Self::new(
             self.y() * other.z() - self.z() * other.y(),
             self.z() * other.x() - self.x() * other.z(),

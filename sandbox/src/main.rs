@@ -225,7 +225,6 @@ impl Application {
                                 camera.move_global(constants::WORLD_UP.scaled(SPEED));
                             }
                             winit::keyboard::KeyCode::ControlLeft => {
-                                // this is fine
                                 camera.move_global(constants::WORLD_UP.scaled(-SPEED));
                             }
                             // winit::keyboard::KeyCode::ArrowUp => {

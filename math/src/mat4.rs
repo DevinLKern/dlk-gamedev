@@ -175,6 +175,7 @@ impl<T: PartialEq + Copy> PartialEq for Mat4<T> {
     }
 }
 
+#[cfg(test)]
 mod test {
     use crate::mat4::Mat4;
     use crate::vec4::Vec4;
