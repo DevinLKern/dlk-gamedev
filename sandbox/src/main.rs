@@ -1,11 +1,12 @@
-pub mod camera;
-pub mod constants;
-pub mod result;
+mod camera;
+mod constants;
+mod result;
 
 use camera::Camera;
+use constants::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
+use result::{Error, Result};
 
 use ash::vk;
-use result::Result;
 
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -17,11 +18,11 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use math::traits::Zero;
-use math::vec2::Vec2;
-use math::vec3::Vec3;
-
-use crate::constants::{WORLD_RIGHT, WORLD_UP};
+use math::{Quat, Zero};
+use math::Vec2;
+use math::Vec3;
+use math::Mat4;
+use math::Identity;
 
 macro_rules! trace_error {
     ($e:expr) => {
@@ -39,14 +40,12 @@ struct Application {
     mouse_sensitivity: f64,
     focused_window: Option<WindowId>,
     active_window: Option<WindowId>,
-    windows: HashMap<WindowId, (renderer::render_context::RenderContext, Window, Camera)>,
+    windows: HashMap<WindowId, (renderer::RenderContext, Window, Camera)>,
     renderer: renderer::Renderer,
-    vertex_buffer: Rc<vulkan::buffer::BufferView>,
-    index_buffer: Rc<vulkan::buffer::BufferView>,
-    image: Rc<vulkan::image::Image>,
-    model_position: Vec3<f32>,
-    model_angle: Vec3<f32>,
-    model_scale: Vec3<f32>,
+    vertex_buffer: Rc<vulkan::BufferView>,
+    index_buffer: Rc<vulkan::BufferView>,
+    image: Rc<vulkan::Image>,
+    model_transform: math::AffineTransform,
     exiting: bool,
 }
 
@@ -56,59 +55,48 @@ impl Application {
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
-        let instance = vulkan::device::Instance::new(debug_enabled, display_handle)?;
-        let device = vulkan::device::Device::new(instance)?;
-        let renderer = renderer::Renderer::new(Rc::new(device))?;
+        let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
+        let device = vulkan::Device::new(instance)?;
+        let renderer = renderer::Renderer::new(device)?;
 
-        // const F: f32 = 0.75;
-        const TR: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT);
-        const TL: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT.scaled(-1.0));
-        const BR: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT);
-        const BL: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT.scaled(-1.0));
-        let vertex_buffer_data = vec![
-            renderer::render_context::Vertex {
-                position: TL,
-                tex_coord: Vec2::new(1.0, 0.0),
-            },
-            renderer::render_context::Vertex {
-                position: TR,
-                tex_coord: Vec2::new(0.0, 0.0),
-            },
-            renderer::render_context::Vertex {
-                position: BR,
-                tex_coord: Vec2::new(0.0, 1.0),
-            },
-            renderer::render_context::Vertex {
-                position: BL,
-                tex_coord: Vec2::new(1.0, 1.0),
-            },
-        ];
-        let index_buffer_data = vec![0, 1, 2, 2, 3, 0];
+        const VERTEX_BUFFER_DATA: [renderer::Vertex; 4] = {
+            const TR: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT);
+            const TL: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT.scaled(-1.0));
+            const BR: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT);
+            const BL: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT.scaled(-1.0));
+            [
+                renderer::Vertex::new(TL, Vec2::new(1.0, 0.0)),
+                renderer::Vertex::new(TR, Vec2::new(0.0, 0.0)),
+                renderer::Vertex::new(BR, Vec2::new(0.0, 1.0)),
+                renderer::Vertex::new(BL, Vec2::new(1.0, 1.0)),
+            ]
+        };
+        const INDEX_BUFFER_DATA: [u32; 6] = [0, 1, 2, 2, 3, 0];
 
         let vertex_buffer = {
             let data = unsafe {
                 std::slice::from_raw_parts(
-                    vertex_buffer_data.as_ptr() as *const u8,
-                    vertex_buffer_data.len()
-                        * std::mem::size_of::<renderer::render_context::Vertex>(),
+                    VERTEX_BUFFER_DATA.as_ptr() as *const u8,
+                    VERTEX_BUFFER_DATA.len()
+                        * std::mem::size_of::<renderer::Vertex>(),
                 )
             };
 
-            renderer.create_vertex_buffer(data, vertex_buffer_data.len() as u32, 0)?
+            renderer.create_vertex_buffer(data, VERTEX_BUFFER_DATA.len() as u32, 0)?
         };
         let index_buffer = {
             let data = unsafe {
                 std::slice::from_raw_parts(
-                    index_buffer_data.as_ptr() as *const u8,
-                    index_buffer_data.len()
-                        * std::mem::size_of::<renderer::render_context::Vertex>(),
+                    INDEX_BUFFER_DATA.as_ptr() as *const u8,
+                    INDEX_BUFFER_DATA.len()
+                        * std::mem::size_of::<renderer::Vertex>(),
                 )
             };
 
             renderer.create_index_buffer(
                 data,
                 vk::IndexType::UINT32,
-                index_buffer_data.len() as u32,
+                INDEX_BUFFER_DATA.len() as u32,
                 0,
             )?
         };
@@ -132,9 +120,7 @@ impl Application {
             index_buffer,
             image,
             exiting: false,
-            model_position: constants::WORLD_FORWARDS.scaled(0.75),
-            model_angle: Vec3::ZERO,
-            model_scale,
+            model_transform: math::AffineTransform{position: WORLD_FORWARDS.scaled(0.75), orientation: Quat::IDENTITY, scalar: model_scale},
         })
     }
 }
@@ -146,44 +132,42 @@ impl Application {
         event: winit::event::WindowEvent,
         window_id: &winit::window::WindowId,
     ) -> Result<bool> {
-        let (context, window, camera) = self.windows.get_mut(window_id).unwrap();
+        use winit::event::WindowEvent;
+
+        let (context, window, camera) = self
+            .windows
+            .get_mut(window_id)
+            .ok_or(Error::WindowIdInvalid)?;
 
         match event {
-            winit::event::WindowEvent::CloseRequested => {
+            WindowEvent::CloseRequested => {
                 println!("close requested!!");
                 // unsafe { self.renderer.destroy_render_context(context) };
                 return Ok(true);
             }
-            winit::event::WindowEvent::Resized(_) => {
+            WindowEvent::Resized(s) => {
                 {
-                    let s = window.inner_size();
                     let (w, h) = (s.width as f32, s.height as f32);
                     let aspect_ratio = w / h;
 
                     camera.set_aspect_ratio(aspect_ratio);
                 }
 
-                let camera_ubo =
-                    camera.calculate_ubo(self.model_position, self.model_scale, self.model_angle);
+                let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
                 let new_context =
                     self.renderer
                         .create_render_context(&camera_ubo, window, self.image.clone())?;
 
                 *context = new_context;
             }
-            winit::event::WindowEvent::RedrawRequested => {
+            WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
 
-                // the the orthographic view volume's cetner is (0, 0, 0)
-                let camera_ubo = camera.calculate_ubo(
-                    self.model_position,
-                    self.model_scale,
-                    self.model_angle.clone(),
-                );
+                let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
                 context.update_current_camera_ubo(&camera_ubo);
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
-                let record_draw_commands = |command_buffer: ash::vk::CommandBuffer| unsafe {
+                let record_draw_commands = |command_buffer: vk::CommandBuffer| unsafe {
                     vertex_buffer.bind(command_buffer);
                     index_buffer.bind(command_buffer);
                     index_buffer.draw(command_buffer);
@@ -193,13 +177,16 @@ impl Application {
                 }
                 window.request_redraw();
             }
-            winit::event::WindowEvent::KeyboardInput { event, .. } => {
+            WindowEvent::KeyboardInput { event, .. } => {
+                use winit::event::KeyEvent;
+                use winit::keyboard::KeyCode;
+
                 // const ANGLE: f32 = 0.025;
                 const SPEED: f32 = 0.025;
                 match event {
-                    winit::event::KeyEvent { physical_key, .. } => match physical_key {
+                    KeyEvent { physical_key, .. } => match physical_key {
                         winit::keyboard::PhysicalKey::Code(c) => match c {
-                            winit::keyboard::KeyCode::Escape => {
+                            KeyCode::Escape => {
                                 self.active_window = None;
                                 match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
                                     Err(e) => {
@@ -209,34 +196,34 @@ impl Application {
                                 }
                                 window.set_cursor_visible(true);
                             }
-                            winit::keyboard::KeyCode::KeyE => {
-                                camera.move_local(constants::WORLD_FORWARDS.scaled(SPEED));
+                            KeyCode::KeyE => {
+                                camera.move_local(WORLD_FORWARDS.scaled(SPEED));
                             }
-                            winit::keyboard::KeyCode::KeyD => {
-                                camera.move_local(constants::WORLD_FORWARDS.scaled(-SPEED));
+                            KeyCode::KeyD => {
+                                camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
                             }
-                            winit::keyboard::KeyCode::KeyF => {
-                                camera.move_local(constants::WORLD_RIGHT.scaled(SPEED));
+                            KeyCode::KeyF => {
+                                camera.move_local(WORLD_RIGHT.scaled(SPEED));
                             }
-                            winit::keyboard::KeyCode::KeyS => {
-                                camera.move_local(constants::WORLD_RIGHT.scaled(-SPEED));
+                            KeyCode::KeyS => {
+                                camera.move_local(WORLD_RIGHT.scaled(-SPEED));
                             }
-                            winit::keyboard::KeyCode::Space => {
-                                camera.move_global(constants::WORLD_UP.scaled(SPEED));
+                            KeyCode::Space => {
+                                camera.move_global(WORLD_UP.scaled(SPEED));
                             }
-                            winit::keyboard::KeyCode::ControlLeft => {
-                                camera.move_global(constants::WORLD_UP.scaled(-SPEED));
+                            KeyCode::ControlLeft => {
+                                camera.move_global(WORLD_UP.scaled(-SPEED));
                             }
-                            // winit::keyboard::KeyCode::ArrowUp => {
+                            // KeyCode::ArrowUp => {
                             //     *self.model_angle.z_mut() += ANGLE;
                             // }
-                            // winit::keyboard::KeyCode::ArrowDown => {
+                            // KeyCode::ArrowDown => {
                             //     *self.model_angle.z_mut() -= ANGLE;
                             // }
-                            // winit::keyboard::KeyCode::ArrowLeft => {
+                            // KeyCode::ArrowLeft => {
                             //     *self.model_angle.x_mut() += ANGLE;
                             // }
-                            // winit::keyboard::KeyCode::ArrowRight => {
+                            // KeyCode::ArrowRight => {
                             //     *self.model_angle.x_mut() -= ANGLE;
                             // }
                             _ => {}
@@ -246,19 +233,21 @@ impl Application {
                 }
                 // println!("Keyboard Input!");
             }
-            winit::event::WindowEvent::Moved(_) => {
+            WindowEvent::Moved(_) => {
                 println!("Moved!");
             }
-            winit::event::WindowEvent::Focused(b) => {
+            WindowEvent::Focused(b) => {
                 if b {
                     self.focused_window = Some(*window_id);
                 }
                 println!("Focused!");
             }
-            winit::event::WindowEvent::MouseInput { button, .. } => {
+            WindowEvent::MouseInput { button, .. } => {
+                use winit::event::MouseButton;
+
                 println!("Mouse Input!");
                 match button {
-                    winit::event::MouseButton::Left => {
+                    MouseButton::Left => {
                         self.active_window = self.focused_window;
                         window
                             .set_cursor_grab(winit::window::CursorGrabMode::Locked)
@@ -270,68 +259,68 @@ impl Application {
                     _ => {}
                 }
             }
-            winit::event::WindowEvent::CursorMoved { .. } => {
+            WindowEvent::CursorMoved { .. } => {
                 // println!("Cursor Moved!: {} {}", position.x, position.y);
             }
-            winit::event::WindowEvent::AxisMotion { .. } => {
+            WindowEvent::AxisMotion { .. } => {
                 // println!("AxisMotion");
             }
-            winit::event::WindowEvent::ActivationTokenDone { .. } => {
+            WindowEvent::ActivationTokenDone { .. } => {
                 println!("Activation Token Done");
             }
-            winit::event::WindowEvent::CursorLeft { .. } => {
+            WindowEvent::CursorLeft { .. } => {
                 println!("CursorLeft!");
             }
-            winit::event::WindowEvent::MouseWheel { .. } => {
+            WindowEvent::MouseWheel { .. } => {
                 println!("MouseWheel!");
             }
-            winit::event::WindowEvent::Occluded(_) => {
+            WindowEvent::Occluded(_) => {
                 println!("Occluded!");
             }
-            winit::event::WindowEvent::DroppedFile(_) => {
+            WindowEvent::DroppedFile(_) => {
                 println!("Dropped file!");
             }
-            winit::event::WindowEvent::HoveredFile(_) => {
+            WindowEvent::HoveredFile(_) => {
                 println!("HoveredFile");
             }
-            winit::event::WindowEvent::Ime(_) => {
+            WindowEvent::Ime(_) => {
                 println!("Ime!");
             }
-            winit::event::WindowEvent::CursorEntered { .. } => {
+            WindowEvent::CursorEntered { .. } => {
                 println!("CursorEntered");
                 // window.set_cursor_visible(false);
             }
-            winit::event::WindowEvent::Destroyed { .. } => {
+            WindowEvent::Destroyed { .. } => {
                 println!("Destroyed!");
             }
-            winit::event::WindowEvent::HoveredFileCancelled => {
+            WindowEvent::HoveredFileCancelled => {
                 println!("HoveredFileCancelled");
             }
-            winit::event::WindowEvent::ModifiersChanged(_) => {
+            WindowEvent::ModifiersChanged(_) => {
                 println!("ModifiersChanged");
             }
-            winit::event::WindowEvent::TouchpadPressure { .. } => {
+            WindowEvent::TouchpadPressure { .. } => {
                 println!("TouchpadPressure");
             }
-            winit::event::WindowEvent::PinchGesture { .. } => {
+            WindowEvent::PinchGesture { .. } => {
                 println!("PinchGesture");
             }
-            winit::event::WindowEvent::DoubleTapGesture { .. } => {
+            WindowEvent::DoubleTapGesture { .. } => {
                 println!("DoubleTapGesture");
             }
-            winit::event::WindowEvent::PanGesture { .. } => {
+            WindowEvent::PanGesture { .. } => {
                 println!("PanGesture");
             }
-            winit::event::WindowEvent::RotationGesture { .. } => {
+            WindowEvent::RotationGesture { .. } => {
                 println!("RotationGesture");
             }
-            winit::event::WindowEvent::Touch(_) => {
+            WindowEvent::Touch(_) => {
                 println!("Touch");
             }
-            winit::event::WindowEvent::ScaleFactorChanged { .. } => {
+            WindowEvent::ScaleFactorChanged { .. } => {
                 println!("ScaleFactorChanged");
             }
-            winit::event::WindowEvent::ThemeChanged(_) => {
+            WindowEvent::ThemeChanged(_) => {
                 println!("ThemeChanged");
             }
         }
@@ -371,11 +360,10 @@ impl ApplicationHandler for Application {
             let (w, h) = (s.width as f32, s.height as f32);
             let aspect_ratio = w / h;
 
-            camera::Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
+            Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
         };
         let window_id = window.id();
-        let camera_ubo =
-            camera.calculate_ubo(self.model_position, self.model_scale, self.model_angle);
+        let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
         let context =
             match self
                 .renderer
@@ -397,16 +385,25 @@ impl ApplicationHandler for Application {
         device_id: winit::event::DeviceId,
         event: winit::event::DeviceEvent,
     ) {
-        match event {
-            winit::event::DeviceEvent::MouseMotion { delta } => {
-                if let Some(window_id) = self.active_window {
-                    let (_, _, camera) = self.windows.get_mut(&window_id).unwrap();
+        use winit::event::DeviceEvent;
 
-                    let dx = -delta.0 * self.mouse_sensitivity;
-                    let dy = -delta.1 * self.mouse_sensitivity;
-
-                    camera.rotate(dx as f32, dy as f32);
+        let (_, _, camera) = match self.active_window {
+            Some(id) => match self.windows.get_mut(&id) {
+                Some(x) => x,
+                None => {
+                    return;
                 }
+            },
+            None => {
+                return;
+            }
+        };
+        match event {
+            DeviceEvent::MouseMotion { delta } => {
+                let dx = -delta.0 * self.mouse_sensitivity;
+                let dy = -delta.1 * self.mouse_sensitivity;
+
+                camera.rotate(dx as f32, dy as f32);
             }
             _ => {
                 // println!("Not implemented")

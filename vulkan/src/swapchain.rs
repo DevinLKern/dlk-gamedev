@@ -1,11 +1,10 @@
-use crate::device::Device;
+use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
 use crate::trace_error;
 use ash::vk;
-use std::rc::Rc;
 
 pub struct Swapchain {
-    device: Rc<Device>,
+    device: SharedDeviceRef,
     surface: vk::SurfaceKHR,
     swapchain: vk::SwapchainKHR,
     extent: vk::Extent2D,
@@ -16,7 +15,7 @@ pub struct Swapchain {
 }
 
 impl Swapchain {
-    pub fn new(device: Rc<Device>, window: &winit::window::Window) -> Result<Swapchain> {
+    pub fn new(device: SharedDeviceRef, window: &winit::window::Window) -> Result<Swapchain> {
         let surface = unsafe { device.create_surface(window) }?;
 
         let surface_format = unsafe { device.get_physical_device_surface_formats(surface) }

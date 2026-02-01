@@ -1,4 +1,4 @@
-use math::vec3::Vec3;
+use math::Vec3;
 
 #[allow(dead_code)]
 pub const VK_VIEW_VOLUME_FAR: f32 = 1.0;

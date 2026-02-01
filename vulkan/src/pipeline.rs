@@ -1,7 +1,7 @@
+use crate::device::SharedDeviceRef;
 use crate::trace_error;
 use crate::{
     descriptor::DescriptorSetLayout,
-    device::Device,
     result::{Error, Result},
 };
 use ash::vk;
@@ -54,7 +54,7 @@ fn spirv_type_to_vk_format(spirv_type: &spirv::ShaderIoType) -> vk::Format {
 }
 
 pub unsafe fn create_shader_modules(
-    device: Rc<Device>,
+    device: SharedDeviceRef,
     shader_path: &std::path::Path,
 ) -> Result<(Rc<spirv::ShaderModule>, vk::ShaderModule)> {
     let shader_code = {
@@ -84,10 +84,10 @@ pub unsafe fn create_shader_modules(
 
 pub struct PipelineLayout {
     // maps name to the set number and information about the set
-    device: Rc<Device>,
-    pub(crate) bind_point: vk::PipelineBindPoint,
+    device: SharedDeviceRef,
+    pub bind_point: vk::PipelineBindPoint,
     set_layouts: Box<[crate::descriptor::DescriptorSetLayout]>,
-    pub(crate) handle: vk::PipelineLayout,
+    pub handle: vk::PipelineLayout,
 }
 
 impl std::fmt::Display for PipelineLayout {
@@ -104,7 +104,7 @@ impl std::fmt::Display for PipelineLayout {
 
 impl PipelineLayout {
     pub fn new_graphics(
-        device: Rc<Device>,
+        device: SharedDeviceRef,
         vert_spv_module: &spirv::ShaderModule,
         frag_spv_module: &spirv::ShaderModule,
     ) -> Result<PipelineLayout> {
@@ -180,7 +180,7 @@ impl Drop for PipelineLayout {
 
 #[allow(dead_code)]
 pub struct Pipeline {
-    device: Rc<Device>,
+    device: SharedDeviceRef,
     layout: Rc<PipelineLayout>,
     pipeline: vk::Pipeline,
 }
@@ -199,7 +199,7 @@ pub enum PipelineCreateInfo {
 }
 
 impl Pipeline {
-    pub fn new(device: Rc<Device>, create_info: &PipelineCreateInfo) -> Result<Pipeline> {
+    pub fn new(device: SharedDeviceRef, create_info: &PipelineCreateInfo) -> Result<Pipeline> {
         match create_info {
             PipelineCreateInfo::Graphics {
                 vk_vertex_shader_module,

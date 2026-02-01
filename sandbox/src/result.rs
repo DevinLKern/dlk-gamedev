@@ -7,8 +7,8 @@ pub enum Error {
     WinitHandleError(winit::raw_window_handle::HandleError),
     VulkanError(vulkan::result::Error),
     ImageError(image::ImageError),
-    RendererError(renderer::result::Error),
-    NotImplemented,
+    RendererError(renderer::Error),
+    WindowIdInvalid,
 }
 
 impl std::fmt::Display for Error {
@@ -22,7 +22,10 @@ impl std::fmt::Display for Error {
             Self::WinitEventLoopError(e) => write!(f, "EventLoopError({})", e),
             Self::WinitHandleError(e) => write!(f, "HandleError({})", e),
             Self::VulkanError(e) => write!(f, "VulkanError({})", e),
-            _ => write!(f, "std::fmt::Display not implemented!"),
+            Self::ImageError(e) => write!(f, "ImageError({})", e),
+            Self::RendererError(e) => write!(f, "RendererError({})", e),
+            Self::WindowIdInvalid => write!(f, "WindowIdInvalid"),
+            // _ => write!(f, "std::fmt::Display not implemented!"),
         }
     }
 }
@@ -57,10 +60,10 @@ impl From<image::ImageError> for Error {
     }
 }
 
-impl From<renderer::result::Error> for Error {
-    fn from(value: renderer::result::Error) -> Self {
+impl From<renderer::Error> for Error {
+    fn from(value: renderer::Error) -> Self {
         match value {
-            renderer::result::Error::VulkanError(e) => Error::VulkanError(e),
+            renderer::Error::VulkanError(e) => Error::VulkanError(e),
             e => Error::RendererError(e),
         }
     }

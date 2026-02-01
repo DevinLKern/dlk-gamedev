@@ -1,6 +1,6 @@
 use crate::mat3::Mat3;
 use crate::mat4::Mat4;
-use crate::traits::{Zero, Identity};
+use crate::traits::{Identity, Zero};
 use crate::vec3::Vec3;
 use crate::vec4::Vec4;
 
@@ -12,7 +12,10 @@ pub struct Quat {
 }
 
 impl Identity for Quat {
-    const IDENTITY: Self = Self{w: 1.0, v: Vec3::ZERO};
+    const IDENTITY: Self = Self {
+        w: 1.0,
+        v: Vec3::ZERO,
+    };
 }
 
 #[allow(dead_code)]
@@ -184,6 +187,10 @@ impl Quat {
             .add(rhs.v.scaled(self.w).add(self.v.cross(rhs.v)));
 
         Self { w, v }
+    }
+    #[inline]
+    pub const fn mul_assign(&mut self, rhs: Self) {
+        *self = self.mul(rhs);
     }
 }
 

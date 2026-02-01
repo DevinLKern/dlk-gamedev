@@ -1,4 +1,5 @@
 use crate::allocator::find_memory_index;
+use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
 use crate::trace_error;
 
@@ -17,7 +18,7 @@ pub struct BufferCreateInfo {
 }
 
 pub struct Buffer {
-    device: Rc<crate::device::Device>,
+    device: SharedDeviceRef,
     pub handle: vk::Buffer,
     pub memory: vk::DeviceMemory,
     pub size: vk::DeviceSize,
@@ -26,7 +27,7 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(
-        device: std::rc::Rc<crate::device::Device>,
+        device: SharedDeviceRef,
         create_info: &BufferCreateInfo,
     ) -> Result<Self> {
         let buffer_create_info = ash::vk::BufferCreateInfo {
@@ -95,7 +96,7 @@ impl Buffer {
     ) -> ash::prelude::VkResult<*mut std::ffi::c_void> {
         unsafe {
             self.device
-                .map_memory(self.memory, offset, size, ash::vk::MemoryMapFlags::empty())
+                .map_memory(self.memory, offset, size, vk::MemoryMapFlags::empty())
         }
     }
 
@@ -154,7 +155,7 @@ impl BufferView {
             } => unsafe {
                 buffer
                     .device
-                    .cmd_bind_index_buffers(command_buffer, buffer.handle, 0, *index_type)
+                    .cmd_bind_index_buffer(command_buffer, buffer.handle, 0, *index_type)
             },
             _ => todo!(),
         }

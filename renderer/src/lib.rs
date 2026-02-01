@@ -1,17 +1,24 @@
-pub mod render_context;
-pub mod result;
+mod render_context;
+mod result;
+
+pub use render_context::RenderContext;
+pub use render_context::CameraUBO;
+pub use render_context::Vertex;
+pub use result::Result;
+pub use result::Error;
 
 use ash::vk;
+use vulkan::device::SharedDeviceRef;
 use std::rc::Rc;
 
 pub struct Renderer {
-    device: Rc<vulkan::device::Device>,
+    device: SharedDeviceRef,
     command_pool: vk::CommandPool,
     sampler: vk::Sampler,
 }
 
 impl Renderer {
-    pub fn new(device: Rc<vulkan::device::Device>) -> result::Result<Renderer> {
+    pub fn new(device: SharedDeviceRef) -> result::Result<Renderer> {
         let command_pool = {
             let command_pool_create_info = vk::CommandPoolCreateInfo {
                 queue_family_index: device.get_queue_family_index(),
@@ -53,8 +60,8 @@ impl Renderer {
             sampler,
         })
     }
-    fn get_transfer_buffer(&self, size: u64) -> result::Result<vulkan::buffer::Buffer> {
-        let transfer_buffer_create_info = vulkan::buffer::BufferCreateInfo {
+    fn get_transfer_buffer(&self, size: u64) -> result::Result<vulkan::Buffer> {
+        let transfer_buffer_create_info = vulkan::BufferCreateInfo {
             size: size,
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
@@ -62,7 +69,7 @@ impl Renderer {
         };
 
         let transfer_buffer =
-            vulkan::buffer::Buffer::new(self.device.clone(), &transfer_buffer_create_info)?;
+            vulkan::Buffer::new(self.device.clone(), &transfer_buffer_create_info)?;
 
         Ok(transfer_buffer)
     }
@@ -71,7 +78,7 @@ impl Renderer {
         &self,
         camera: &crate::render_context::CameraUBO,
         window: &winit::window::Window,
-        image: Rc<vulkan::image::Image>,
+        image: Rc<vulkan::Image>,
     ) -> result::Result<render_context::RenderContext> {
         let vert_shader_path = std::path::Path::new("compiled-shaders").join("shader.vert.spv");
         let frag_shader_path = std::path::Path::new("compiled-shaders").join("shader.frag.spv");
@@ -79,7 +86,7 @@ impl Renderer {
         let vert_spv_module = Rc::new(spirv::ShaderModule::from_file(&vert_shader_path)?);
         let frag_spv_module = Rc::new(spirv::ShaderModule::from_file(&frag_shader_path)?);
 
-        let pipeline_layout = Rc::new(vulkan::pipeline::PipelineLayout::new_graphics(
+        let pipeline_layout = Rc::new(vulkan::PipelineLayout::new_graphics(
             self.device.clone(),
             &vert_spv_module,
             &frag_spv_module,
@@ -121,7 +128,7 @@ impl Renderer {
                     ..Default::default()
                 };
 
-                Rc::new(vulkan::descriptor::DescriptorPool::new(
+                Rc::new(vulkan::DescriptorPool::new(
                     self.device.clone(),
                     &pool_create_info,
                 )?)
@@ -130,7 +137,7 @@ impl Renderer {
             let per_frame_descriptor_sets = {
                 let layouts: Box<[vk::DescriptorSetLayout]> =
                     (0..3).map(|_| all_layouts[0].handle.clone()).collect();
-                vulkan::descriptor::DescriptorSet::allocate(
+                vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
                     &layouts,
@@ -139,7 +146,7 @@ impl Renderer {
             let other_descriptor_sets = {
                 let layouts: Box<[vk::DescriptorSetLayout]> =
                     all_layouts.into_iter().skip(1).map(|l| l.handle).collect();
-                vulkan::descriptor::DescriptorSet::allocate(
+                vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
                     &layouts,
@@ -156,7 +163,7 @@ impl Renderer {
         )?;
         for bv in per_frame_uniform_buffers.iter() {
             match bv {
-                vulkan::buffer::BufferView::Uniform {
+                vulkan::BufferView::Uniform {
                     buffer,
                     offset,
                     size,
@@ -256,16 +263,16 @@ impl Renderer {
         data: &[u8],
         vertex_count: u32,
         first_vertex: u32,
-    ) -> vulkan::result::Result<Rc<vulkan::buffer::BufferView>> {
+    ) -> vulkan::Result<Rc<vulkan::BufferView>> {
         let buffer = {
-            let buffer_create_info = vulkan::buffer::BufferCreateInfo {
+            let buffer_create_info = vulkan::BufferCreateInfo {
                 size: data.len() as u64,
                 usage: vk::BufferUsageFlags::VERTEX_BUFFER,
                 memory_property_flags: ash::vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
             };
 
-            vulkan::buffer::Buffer::new(self.device.clone(), &buffer_create_info)?
+            vulkan::Buffer::new(self.device.clone(), &buffer_create_info)?
         };
 
         let buffer = Rc::new(buffer);
@@ -278,7 +285,7 @@ impl Renderer {
             buffer.unmap();
         }
 
-        let view = vulkan::buffer::BufferView::Vertex {
+        let view = vulkan::BufferView::Vertex {
             buffer,
             vertex_count,
             instance_count: 1,
@@ -294,7 +301,7 @@ impl Renderer {
         index_type: vk::IndexType,
         index_count: u32,
         first_index: u32,
-    ) -> result::Result<Rc<vulkan::buffer::BufferView>> {
+    ) -> result::Result<Rc<vulkan::BufferView>> {
         let buffer = {
             let buffer_create_info = vulkan::buffer::BufferCreateInfo {
                 size: data.len() as u64,
@@ -303,7 +310,7 @@ impl Renderer {
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
             };
 
-            vulkan::buffer::Buffer::new(self.device.clone(), &buffer_create_info)?
+            vulkan::Buffer::new(self.device.clone(), &buffer_create_info)?
         };
 
         let buffer = Rc::new(buffer);
@@ -316,7 +323,7 @@ impl Renderer {
             buffer.unmap();
         }
 
-        let view = vulkan::buffer::BufferView::Index {
+        let view = vulkan::BufferView::Index {
             buffer,
             index_count,
             instance_count: 1,
@@ -330,22 +337,22 @@ impl Renderer {
         &self,
         size: u64,
         count: u64,
-    ) -> result::Result<Box<[vulkan::buffer::BufferView]>> {
+    ) -> result::Result<Box<[vulkan::BufferView]>> {
         let buffer = {
-            let buffer_create_info = vulkan::buffer::BufferCreateInfo {
+            let buffer_create_info = vulkan::BufferCreateInfo {
                 size: size * count,
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
                 memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
             };
 
-            vulkan::buffer::Buffer::new(self.device.clone(), &buffer_create_info)?
+            vulkan::Buffer::new(self.device.clone(), &buffer_create_info)?
         };
 
         let buffer = Rc::new(buffer);
 
-        let views: Box<[vulkan::buffer::BufferView]> = (0..count)
-            .map(|i| vulkan::buffer::BufferView::Uniform {
+        let views: Box<[vulkan::BufferView]> = (0..count)
+            .map(|i| vulkan::BufferView::Uniform {
                 buffer: buffer.clone(),
                 offset: i * size,
                 size: size,
@@ -357,10 +364,10 @@ impl Renderer {
     pub fn update_uniform_buffer(
         &self,
         data: &[u8],
-        uniform_buffer: &vulkan::buffer::BufferView,
+        uniform_buffer: &vulkan::BufferView,
     ) -> result::Result<()> {
         match uniform_buffer {
-            vulkan::buffer::BufferView::Uniform {
+            vulkan::BufferView::Uniform {
                 buffer,
                 offset,
                 size,
@@ -377,7 +384,7 @@ impl Renderer {
     pub fn create_image(
         &self,
         image_data: image::DynamicImage,
-    ) -> result::Result<Rc<vulkan::image::Image>> {
+    ) -> result::Result<Rc<vulkan::Image>> {
         use image::GenericImageView;
 
         let (width, height) = image_data.dimensions();
@@ -386,7 +393,7 @@ impl Renderer {
         let size = data.len() as u64;
 
         let image = {
-            let image_create_info = vulkan::image::ImageCreateInfo {
+            let image_create_info = vulkan::ImageCreateInfo {
                 memory_property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
                 mip_levels: 1,
                 image_type: vk::ImageType::TYPE_2D,
@@ -398,7 +405,7 @@ impl Renderer {
                 array_layers: 1,
             };
 
-            vulkan::image::Image::new(self.device.clone(), &image_create_info)?
+            vulkan::Image::new(self.device.clone(), &image_create_info)?
         };
 
         let transfer_buffer = self.get_transfer_buffer(size)?;
@@ -533,8 +540,9 @@ impl Renderer {
                 ..Default::default()
             }];
 
-            self.device.queue_submit(&submit_info, vk::Fence::null())?;
-            self.device.wait_idle()?;
+            self.device
+                .queue_submit(self.device.queue, &submit_info, vk::Fence::null())?;
+            self.device.device_wait_idle()?;
             self.device
                 .free_command_buffers(self.command_pool, &[command_buffer]);
         }
@@ -546,7 +554,7 @@ impl Renderer {
 impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.device.wait_idle();
+            let _ = self.device.device_wait_idle();
             self.device.destroy_command_pool(self.command_pool);
             self.device.destroy_sampler(self.sampler);
         }

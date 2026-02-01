@@ -1,4 +1,4 @@
-use crate::device::Device;
+use crate::device::SharedDeviceRef;
 use crate::result::Result;
 use std::rc::Rc;
 
@@ -14,7 +14,7 @@ fn spirv_uniform_type_to_vk_descriptor_type(
         spirv::UniformType::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
         spirv::UniformType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
         spirv::UniformType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
-        _ => ash::vk::DescriptorType::UNIFORM_BUFFER,
+        _ => vk::DescriptorType::UNIFORM_BUFFER,
     }
 }
 
@@ -41,7 +41,7 @@ impl std::fmt::Display for DescriptorSetLayoutBindingInfo {
 
 // #[derive(Debug)]
 pub struct DescriptorSetLayout {
-    device: Rc<crate::device::Device>,
+    device: SharedDeviceRef,
     pub set: u32,
     pub bindings: Box<[DescriptorSetLayoutBindingInfo]>,
     pub handle: vk::DescriptorSetLayout,
@@ -49,7 +49,7 @@ pub struct DescriptorSetLayout {
 
 impl DescriptorSetLayout {
     pub(crate) fn new(
-        device: Rc<crate::device::Device>,
+        device: SharedDeviceRef,
         set: u32,
         bindings: &[(vk::ShaderStageFlags, spirv::UniformInfo)],
     ) -> VkResult<DescriptorSetLayout> {
@@ -120,12 +120,12 @@ impl std::fmt::Display for DescriptorSetLayout {
 }
 
 pub struct DescriptorPool {
-    device: Rc<Device>,
+    device: SharedDeviceRef,
     handle: vk::DescriptorPool,
 }
 
 impl DescriptorPool {
-    pub fn new(device: Rc<Device>, create_info: &vk::DescriptorPoolCreateInfo) -> Result<Self> {
+    pub fn new(device: SharedDeviceRef, create_info: &vk::DescriptorPoolCreateInfo) -> Result<Self> {
         let pool = unsafe { device.create_descriptor_pool(create_info) }?;
         Ok(Self {
             device,
@@ -142,14 +142,14 @@ impl Drop for DescriptorPool {
 
 #[allow(dead_code)]
 pub struct DescriptorSet {
-    device: Rc<Device>,
+    device: SharedDeviceRef,
     pool: Rc<DescriptorPool>,
     pub handle: vk::DescriptorSet,
 }
 
 impl DescriptorSet {
     pub fn allocate(
-        device: Rc<Device>,
+        device: SharedDeviceRef,
         pool: Rc<DescriptorPool>,
         set_layouts: &[vk::DescriptorSetLayout],
     ) -> Result<Box<[Self]>> {

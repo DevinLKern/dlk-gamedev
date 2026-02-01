@@ -1,207 +1,82 @@
 use crate::result::{Error, Result};
-use crate::trace_error;
+use crate::{SharedInstanceRef, trace_error};
 use ash::prelude::VkResult;
 use ash::vk;
-
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    let callback_data = unsafe { *p_callback_data };
-    let message_id_number = callback_data.message_id_number;
-
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy() }
-    };
-
-    let message = if callback_data.p_message.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy() }
-    };
-
-    println!(
-        "{message_severity:?}:\n{message_type:?} [{message_id_name} ({message_id_number})] : {message}\n",
-    );
-
-    vk::FALSE
-}
-
-#[allow(dead_code)]
-pub struct Instance {
-    debug_enabled: bool,
-    entry: ash::Entry,
-    instance: ash::Instance,
-    allocation_callbacks: Option<vk::AllocationCallbacks<'static>>,
-    debug_utils: ash::ext::debug_utils::Instance,
-    surface_loader: ash::khr::surface::Instance,
-}
-
-impl Instance {
-    pub fn new(
-        debug_enabled: bool,
-        display_handle: &winit::raw_window_handle::DisplayHandle,
-    ) -> Result<std::rc::Rc<Instance>> {
-        let entry = unsafe { ash::Entry::load() }?;
-
-        let allocation_callbacks: Option<vk::AllocationCallbacks> = None;
-
-        let instance = {
-            let app_name = std::ffi::CString::new("My Vulkan App")?;
-            let engine_name = std::ffi::CString::new("My Engine")?;
-
-            let app_info = vk::ApplicationInfo {
-                s_type: vk::StructureType::APPLICATION_INFO,
-                p_next: std::ptr::null(),
-                p_application_name: app_name.as_ptr(),
-                application_version: vk::make_api_version(0, 1, 0, 0),
-                p_engine_name: engine_name.as_ptr(),
-                engine_version: vk::make_api_version(0, 1, 0, 0),
-                api_version: vk::API_VERSION_1_3,
-                ..Default::default()
-            };
-            let mut enabled_layer_names = Vec::with_capacity(4);
-            let mut enabled_extension_names =
-                { ash_window::enumerate_required_extensions(display_handle.as_raw())?.to_vec() };
-
-            if debug_enabled {
-                enabled_layer_names.push(c"VK_LAYER_KHRONOS_validation".as_ptr());
-                enabled_extension_names.push(ash::ext::debug_utils::NAME.as_ptr());
-            }
-
-            let available_layer_properties =
-                unsafe { entry.enumerate_instance_layer_properties() }?;
-            for layer_name in enabled_layer_names.iter() {
-                let mut found = false;
-                let enabled_layer_name = unsafe { std::ffi::CStr::from_ptr(*layer_name) };
-                for layer_properties in available_layer_properties.iter() {
-                    let available_layer_name =
-                        unsafe { std::ffi::CStr::from_ptr(layer_properties.layer_name.as_ptr()) };
-                    if enabled_layer_name == available_layer_name {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    return Err(Error::CouldNotFindLayer(enabled_layer_name.into()));
-                }
-            }
-
-            let available_extension_properties =
-                unsafe { entry.enumerate_instance_extension_properties(None) }?;
-            for extension_name in enabled_extension_names.iter() {
-                let mut found = false;
-                let enabled_extension_name = unsafe { std::ffi::CStr::from_ptr(*extension_name) };
-                for extension_properties in available_extension_properties.iter() {
-                    let available_extension_name = unsafe {
-                        std::ffi::CStr::from_ptr(extension_properties.extension_name.as_ptr())
-                    };
-                    if enabled_extension_name == available_extension_name {
-                        found = true;
-                        break;
-                    }
-                }
-                if !found {
-                    return Err(Error::CouldNotFindExtension(enabled_extension_name.into()));
-                }
-            }
-
-            let instance_create_info = vk::InstanceCreateInfo {
-                p_application_info: &app_info,
-                enabled_layer_count: enabled_layer_names.len() as u32,
-                pp_enabled_layer_names: enabled_layer_names.as_ptr(),
-                enabled_extension_count: enabled_extension_names.len() as u32,
-                pp_enabled_extension_names: enabled_extension_names.as_ptr(),
-                ..Default::default()
-            };
-
-            unsafe { entry.create_instance(&instance_create_info, allocation_callbacks.as_ref()) }
-                .inspect_err(|e| trace_error!(e))?
-        };
-
-        let debug_utils = ash::ext::debug_utils::Instance::new(&entry, &instance);
-
-        let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
-
-        Ok(std::rc::Rc::new(Instance {
-            debug_enabled,
-            entry,
-            instance,
-            allocation_callbacks,
-            debug_utils,
-            surface_loader,
-        }))
-    }
-}
-
-impl Drop for Instance {
-    fn drop(&mut self) {
-        unsafe {
-            self.instance
-                .destroy_instance(self.allocation_callbacks.as_ref());
-        }
-    }
-}
+use ash::vk::*;
 
 // #[derive(Debug)]
 pub struct Device {
-    instance: std::rc::Rc<Instance>,
+    instance: SharedInstanceRef,
     physical_device: vk::PhysicalDevice,
-    debug_messenger: vk::DebugUtilsMessengerEXT,
+    debug_messenger: Option<vk::DebugUtilsMessengerEXT>,
     device: ash::Device,
     swapchain_loader: ash::khr::swapchain::Device,
-    queue: vk::Queue,
+    pub queue: vk::Queue, // TODO: rework queues
     queue_family_index: u32,
 }
 
+pub type SharedDeviceRef = std::sync::Arc<Device>;
+
+macro_rules! vk_delegate_create {
+    ($fn:ident, $info_ty:ident, $ret:ident) => {
+        #[inline]
+        pub unsafe fn $fn(&self, info: &vk::$info_ty) -> VkResult<vk::$ret> {
+            unsafe { self.device.$fn(info, self.get_alloc_callbacks()) }
+        }
+    };
+}
+
+macro_rules! vk_delegate_destroy {
+    ($fn:ident, $handle:ident) => {
+        #[inline]
+        pub unsafe fn $fn(&self, handle: vk::$handle) {
+            unsafe { self.device.$fn(handle, self.get_alloc_callbacks()) }
+        }
+    };
+}
+
+macro_rules! vk_delegate_create_many {
+    ($fn:ident, $info_ty:ident, $ret:ident) => {
+        #[inline]
+        pub unsafe fn $fn(&self, info: &vk::$info_ty) -> VkResult<Vec<vk::$ret>> {
+            unsafe { self.device.$fn(info) }
+        }
+    };
+}
+
+macro_rules! vk_delegate_destroy_many {
+    ($fn:ident, $pool_ty:ident, $handle_ty:ident) => {
+        #[inline]
+        pub unsafe fn $fn(&self, pool: vk::$pool_ty, handles: &[vk::$handle_ty]) {
+            unsafe { self.device.$fn(pool, handles) }
+        }
+    };
+}
+
+macro_rules! vk_delegate_forward {
+    ($fn:ident, ($($arg:ident : $ty:ty),*), $ret:ty) => {
+        #[inline]
+        pub unsafe fn $fn(&self, $($arg: $ty),*) -> $ret {
+            unsafe { self.device.$fn($($arg),*) }
+        }
+    };
+}
+
+pub type SharedRef<T> = std::sync::Arc<T>;
+
 #[allow(dead_code)]
 impl Device {
-    pub fn new(instance: std::rc::Rc<Instance>) -> Result<Device> {
-        let debug_messenger = unsafe {
-            let debug_messenger_create_info = vk::DebugUtilsMessengerCreateInfoEXT {
-                s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
-                message_severity: vk::DebugUtilsMessageSeverityFlagsEXT::INFO
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::WARNING
-                    | vk::DebugUtilsMessageSeverityFlagsEXT::ERROR,
-                message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
-                    | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
-                    | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-                pfn_user_callback: Some(vulkan_debug_callback),
-                p_user_data: std::ptr::null_mut(),
-                ..Default::default()
-            };
-
-            instance
-                .debug_utils
-                .create_debug_utils_messenger(
-                    &debug_messenger_create_info,
-                    instance.allocation_callbacks.as_ref(),
-                )
-                .inspect_err(|e| {
-                    trace_error!(e);
-                    instance
-                        .instance
-                        .destroy_instance(instance.allocation_callbacks.as_ref());
-                })?
-        };
+    pub fn new(instance: SharedInstanceRef) -> Result<SharedRef<Device>> {
+        let debug_messenger = instance.create_debug_utils_messenger()?;
 
         let queue_priority: f32 = 1.0;
 
         let (queue_create_info, physical_device) = {
             let all_physical_devices = unsafe {
                 instance
-                    .instance
+                    .raw()
                     .enumerate_physical_devices()
-                    .inspect_err(|e| {
-                        trace_error!(e);
-                        instance
-                            .instance
-                            .destroy_instance(instance.allocation_callbacks.as_ref());
-                    })
+                    .inspect_err(|e| { trace_error!(e); })
             }?;
 
             let viable_physical_devices: Box<[(usize, vk::PhysicalDevice)]> = all_physical_devices
@@ -211,7 +86,7 @@ impl Device {
                     let mut properties = vk::PhysicalDeviceProperties2::default();
                     unsafe {
                         instance
-                            .instance
+                            .raw()
                             .get_physical_device_properties2(*pd, &mut properties);
                     }
 
@@ -221,12 +96,12 @@ impl Device {
 
                     let queue_family_properties = unsafe {
                         let count = instance
-                            .instance
+                            .raw()
                             .get_physical_device_queue_family_properties2_len(*pd);
                         let mut properties =
                             vec![vk::QueueFamilyProperties2::default(); count].into_boxed_slice();
                         instance
-                            .instance
+                            .raw()
                             .get_physical_device_queue_family_properties2(*pd, properties.as_mut());
                         properties
                     };
@@ -248,14 +123,8 @@ impl Device {
                 .collect();
 
             if viable_physical_devices.len() == 0 {
-                unsafe {
-                    instance.debug_utils.destroy_debug_utils_messenger(
-                        debug_messenger,
-                        instance.allocation_callbacks.as_ref(),
-                    );
-                    instance
-                        .instance
-                        .destroy_instance(instance.allocation_callbacks.as_ref());
+                if let Some(messenger) = debug_messenger {
+                    unsafe { instance.destroy_debug_utils_messenger(messenger); }
                 }
                 return Err(Error::NoViablePhysicalDevices);
             }
@@ -264,7 +133,7 @@ impl Device {
                 let mut properties = vk::PhysicalDeviceProperties2::default();
                 unsafe {
                     instance
-                        .instance
+                        .raw()
                         .get_physical_device_properties2(*pd, &mut properties);
                 }
 
@@ -287,13 +156,12 @@ impl Device {
                 ),
                 None => {
                     unsafe {
-                        instance.debug_utils.destroy_debug_utils_messenger(
-                            debug_messenger,
-                            instance.allocation_callbacks.as_ref(),
-                        );
+                        if let Some(messenger) = debug_messenger {
+                            instance.destroy_debug_utils_messenger(messenger);
+                        }
                         instance
-                            .instance
-                            .destroy_instance(instance.allocation_callbacks.as_ref());
+                            .raw()
+                            .destroy_instance(instance.allocation_callbacks_ref());
                     }
                     return Err(Error::NoViablePhysicalDevices);
                 }
@@ -327,26 +195,22 @@ impl Device {
 
             unsafe {
                 instance
-                    .instance
+                    .raw()
                     .create_device(
                         physical_device,
                         &device_create_info,
-                        instance.allocation_callbacks.as_ref(),
+                        instance.allocation_callbacks_ref(),
                     )
                     .inspect_err(|e| {
                         trace_error!(e);
-                        instance.debug_utils.destroy_debug_utils_messenger(
-                            debug_messenger,
-                            instance.allocation_callbacks.as_ref(),
-                        );
-                        instance
-                            .instance
-                            .destroy_instance(instance.allocation_callbacks.as_ref());
+                        if let Some(messenger) = debug_messenger {
+                            instance.destroy_debug_utils_messenger(messenger); 
+                        }
                     })?
             }
         };
 
-        let swapchain_loader = ash::khr::swapchain::Device::new(&instance.instance, &device);
+        let swapchain_loader = ash::khr::swapchain::Device::new(instance.raw(), &device);
 
         let queue = {
             let get_queue_info = vk::DeviceQueueInfo2 {
@@ -365,12 +229,12 @@ impl Device {
             swapchain_loader,
             queue,
             queue_family_index: queue_create_info.queue_family_index,
-        })
+        }.into())
     }
 
     #[inline]
     unsafe fn get_alloc_callbacks(&self) -> Option<&vk::AllocationCallbacks<'_>> {
-        self.instance.allocation_callbacks.as_ref()
+        self.instance.allocation_callbacks_ref()
     }
 
     #[inline]
@@ -380,7 +244,7 @@ impl Device {
     ) -> vk::FormatProperties {
         unsafe {
             self.instance
-                .instance
+                .raw()
                 .get_physical_device_format_properties(self.physical_device, format)
         }
     }
@@ -389,7 +253,7 @@ impl Device {
     pub unsafe fn get_physical_device_properties(&self) -> vk::PhysicalDeviceProperties {
         unsafe {
             self.instance
-                .instance
+                .raw()
                 .get_physical_device_properties(self.physical_device)
         }
     }
@@ -435,192 +299,8 @@ impl Device {
     ) -> vk::PhysicalDeviceMemoryProperties {
         unsafe {
             self.instance
-                .instance
+                .raw()
                 .get_physical_device_memory_properties(self.physical_device)
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn get_buffer_memory_requirements(
-        &self,
-        buffer: vk::Buffer,
-    ) -> vk::MemoryRequirements {
-        unsafe { self.device.get_buffer_memory_requirements(buffer) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn get_image_memory_requirements(
-        &self,
-        image: vk::Image,
-    ) -> vk::MemoryRequirements {
-        unsafe { self.device.get_image_memory_requirements(image) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn allocate_memory(
-        &self,
-        alloc_info: &vk::MemoryAllocateInfo,
-    ) -> VkResult<vk::DeviceMemory> {
-        unsafe {
-            self.device
-                .allocate_memory(alloc_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn free_memory(&self, memory: vk::DeviceMemory) {
-        unsafe {
-            self.device.free_memory(memory, self.get_alloc_callbacks());
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_buffer(
-        &self,
-        create_info: &vk::BufferCreateInfo,
-    ) -> VkResult<vk::Buffer> {
-        unsafe {
-            self.device
-                .create_buffer(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn destroy_buffer(&self, buffer: vk::Buffer) {
-        unsafe {
-            self.device
-                .destroy_buffer(buffer, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn map_memory(
-        &self,
-        memory: vk::DeviceMemory,
-        offset: vk::DeviceSize,
-        size: vk::DeviceSize,
-        flags: vk::MemoryMapFlags,
-    ) -> VkResult<*mut std::ffi::c_void> {
-        unsafe { self.device.map_memory(memory, offset, size, flags) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn unmap_memory(&self, memory: vk::DeviceMemory) {
-        unsafe { self.device.unmap_memory(memory) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_image(
-        &self,
-        create_info: &vk::ImageCreateInfo,
-    ) -> VkResult<vk::Image> {
-        unsafe {
-            self.device
-                .create_image(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn destroy_image(&self, image: vk::Image) {
-        unsafe { self.device.destroy_image(image, self.get_alloc_callbacks()) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_image_view(
-        &self,
-        create_info: &vk::ImageViewCreateInfo,
-    ) -> VkResult<vk::ImageView> {
-        unsafe {
-            self.device
-                .create_image_view(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_image_view(&self, image_view: vk::ImageView) {
-        unsafe {
-            self.device
-                .destroy_image_view(image_view, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn bind_image_memory(
-        &self,
-        image: vk::Image,
-        device_memory: vk::DeviceMemory,
-        offset: vk::DeviceSize,
-    ) -> VkResult<()> {
-        unsafe { self.device.bind_image_memory(image, device_memory, offset) }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn bind_buffer_memory(
-        &self,
-        buffer: vk::Buffer,
-        device_memory: vk::DeviceMemory,
-        offset: vk::DeviceSize,
-    ) -> VkResult<()> {
-        unsafe {
-            self.device
-                .bind_buffer_memory(buffer, device_memory, offset)
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_shader_module(
-        &self,
-        create_info: &vk::ShaderModuleCreateInfo,
-    ) -> VkResult<vk::ShaderModule> {
-        unsafe {
-            self.device
-                .create_shader_module(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_shader_module(&self, shader: vk::ShaderModule) {
-        unsafe {
-            self.device
-                .destroy_shader_module(shader, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_pipeline_layout(
-        &self,
-        create_info: &vk::PipelineLayoutCreateInfo,
-    ) -> VkResult<vk::PipelineLayout> {
-        unsafe {
-            self.device
-                .create_pipeline_layout(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn destroy_pipeline_layout(&self, pipeline_layout: vk::PipelineLayout) {
-        unsafe {
-            self.device
-                .destroy_pipeline_layout(pipeline_layout, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn create_descriptor_set_layout(
-        &self,
-        create_info: &vk::DescriptorSetLayoutCreateInfo,
-    ) -> VkResult<vk::DescriptorSetLayout> {
-        unsafe {
-            self.device
-                .create_descriptor_set_layout(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn destroy_descriptor_set_layout(&self, layout: vk::DescriptorSetLayout) {
-        unsafe {
-            self.device
-                .destroy_descriptor_set_layout(layout, self.get_alloc_callbacks())
         }
     }
 
@@ -636,14 +316,6 @@ impl Device {
                 create_infos,
                 self.get_alloc_callbacks(),
             )
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn destroy_pipeline(&self, pipeline: vk::Pipeline) {
-        unsafe {
-            self.device
-                .destroy_pipeline(pipeline, self.get_alloc_callbacks())
         }
     }
 
@@ -677,38 +349,6 @@ impl Device {
     #[inline]
     pub fn get_queue_family_index(&self) -> u32 {
         self.queue_family_index
-    }
-
-    #[inline]
-    pub unsafe fn create_command_pool(
-        &self,
-        create_info: &vk::CommandPoolCreateInfo,
-    ) -> VkResult<vk::CommandPool> {
-        unsafe {
-            self.device
-                .create_command_pool(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_command_pool(&self, command_pool: vk::CommandPool) {
-        unsafe {
-            self.device
-                .destroy_command_pool(command_pool, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn create_fence(&self, create_info: &vk::FenceCreateInfo) -> VkResult<vk::Fence> {
-        unsafe {
-            self.device
-                .create_fence(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_fence(&self, fence: vk::Fence) {
-        unsafe { self.device.destroy_fence(fence, self.get_alloc_callbacks()) }
     }
 
     #[inline]
@@ -749,7 +389,7 @@ impl Device {
         let surface = unsafe {
             ash_window::create_surface(
                 &self.instance.entry,
-                &self.instance.instance,
+                &self.instance.raw(),
                 display_handle.as_raw(),
                 window_handle.as_raw(),
                 self.get_alloc_callbacks(),
@@ -769,81 +409,6 @@ impl Device {
     }
 
     #[inline]
-    pub unsafe fn create_semaphore(
-        &self,
-        create_info: &vk::SemaphoreCreateInfo,
-    ) -> VkResult<vk::Semaphore> {
-        unsafe {
-            self.device
-                .create_semaphore(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_semaphore(&self, semaphore: vk::Semaphore) {
-        unsafe {
-            self.device
-                .destroy_semaphore(semaphore, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn allocate_command_buffers(
-        &self,
-        allocate_info: &vk::CommandBufferAllocateInfo,
-    ) -> VkResult<Vec<vk::CommandBuffer>> {
-        unsafe { self.device.allocate_command_buffers(allocate_info) }
-    }
-
-    #[inline]
-    pub unsafe fn free_command_buffers(
-        &self,
-        command_pool: vk::CommandPool,
-        command_buffers: &[vk::CommandBuffer],
-    ) {
-        unsafe {
-            self.device
-                .free_command_buffers(command_pool, command_buffers);
-        }
-    }
-
-    #[inline]
-    pub unsafe fn begin_command_buffer(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        begin_info: &vk::CommandBufferBeginInfo,
-    ) -> VkResult<()> {
-        unsafe { self.device.begin_command_buffer(command_buffer, begin_info) }
-    }
-
-    #[inline]
-    pub unsafe fn end_command_buffer(&self, command_buffer: vk::CommandBuffer) -> VkResult<()> {
-        unsafe { self.device.end_command_buffer(command_buffer) }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_begin_rendering(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        rendering_info: &vk::RenderingInfo,
-    ) {
-        unsafe {
-            self.device
-                .cmd_begin_rendering(command_buffer, rendering_info)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_end_rendering(&self, command_buffer: vk::CommandBuffer) {
-        unsafe { self.device.cmd_end_rendering(command_buffer) }
-    }
-
-    #[inline]
-    pub unsafe fn wait_for_fences(&self, fences: &[vk::Fence]) -> VkResult<()> {
-        unsafe { self.device.wait_for_fences(fences, true, u64::MAX) }
-    }
-
-    #[inline]
     pub(crate) unsafe fn acquire_next_image(
         &self,
         swapchain: vk::SwapchainKHR,
@@ -857,117 +422,10 @@ impl Device {
     }
 
     #[inline]
-    pub unsafe fn queue_submit(
-        &self,
-        submits: &[vk::SubmitInfo],
-        fence: vk::Fence,
-    ) -> VkResult<()> {
-        unsafe { self.device.queue_submit(self.queue, submits, fence) }
-    }
-
-    #[inline]
     pub unsafe fn queue_present(&self, present_info: &vk::PresentInfoKHR) -> VkResult<bool> {
         unsafe {
             self.swapchain_loader
                 .queue_present(self.queue, present_info)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn reset_fences(&self, fences: &[vk::Fence]) -> VkResult<()> {
-        unsafe { self.device.reset_fences(fences) }
-    }
-
-    #[inline]
-    pub unsafe fn reset_command_buffer(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        flags: vk::CommandBufferResetFlags,
-    ) -> VkResult<()> {
-        unsafe { self.device.reset_command_buffer(command_buffer, flags) }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_pipeline_barrier2(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        dependency_info: &vk::DependencyInfo,
-    ) {
-        unsafe {
-            self.device
-                .cmd_pipeline_barrier2(command_buffer, dependency_info);
-        }
-    }
-
-    #[inline]
-    pub unsafe fn wait_idle(&self) -> VkResult<()> {
-        unsafe { self.device.device_wait_idle() }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn cmd_bind_pipeline(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        pipeline_bind_point: vk::PipelineBindPoint,
-        pipeline: vk::Pipeline,
-    ) {
-        unsafe {
-            self.device
-                .cmd_bind_pipeline(command_buffer, pipeline_bind_point, pipeline)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_set_viewport(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        first_viewport: u32,
-        viewports: &[vk::Viewport],
-    ) {
-        unsafe {
-            self.device
-                .cmd_set_viewport(command_buffer, first_viewport, viewports)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_set_scissor(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        first_scissor: u32,
-        scissors: &[vk::Rect2D],
-    ) {
-        unsafe {
-            self.device
-                .cmd_set_scissor(command_buffer, first_scissor, scissors)
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn cmd_bind_vertex_buffers(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        first_binding: u32,
-        buffers: &[vk::Buffer],
-        offsets: &[vk::DeviceSize],
-    ) {
-        unsafe {
-            self.device
-                .cmd_bind_vertex_buffers(command_buffer, first_binding, buffers, offsets)
-        }
-    }
-
-    #[inline]
-    pub(crate) unsafe fn cmd_bind_index_buffers(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        buffer: vk::Buffer,
-        offset: vk::DeviceSize,
-        index_type: vk::IndexType,
-    ) {
-        unsafe {
-            self.device
-                .cmd_bind_index_buffer(command_buffer, buffer, offset, index_type)
         }
     }
 
@@ -993,128 +451,86 @@ impl Device {
         }
     }
 
-    #[inline]
-    pub unsafe fn create_descriptor_pool(
-        &self,
-        create_info: &vk::DescriptorPoolCreateInfo,
-    ) -> VkResult<vk::DescriptorPool> {
-        unsafe {
-            self.device
-                .create_descriptor_pool(create_info, self.get_alloc_callbacks())
-        }
-    }
+    vk_delegate_create!(allocate_memory, MemoryAllocateInfo, DeviceMemory);
+    vk_delegate_destroy!(free_memory, DeviceMemory);
+    vk_delegate_create!(create_buffer, BufferCreateInfo, Buffer);
+    vk_delegate_destroy!(destroy_buffer, Buffer);
+    vk_delegate_create!(create_image, ImageCreateInfo, Image);
+    vk_delegate_destroy!(destroy_image, Image);
+    vk_delegate_create!(create_image_view, ImageViewCreateInfo, ImageView);
+    vk_delegate_destroy!(destroy_image_view, ImageView);
+    vk_delegate_create!(create_shader_module, ShaderModuleCreateInfo, ShaderModule);
+    vk_delegate_destroy!(destroy_shader_module, ShaderModule);
+    vk_delegate_create!(
+        create_pipeline_layout,
+        PipelineLayoutCreateInfo,
+        PipelineLayout
+    );
+    vk_delegate_destroy!(destroy_pipeline_layout, PipelineLayout);
+    vk_delegate_create!(
+        create_descriptor_set_layout,
+        DescriptorSetLayoutCreateInfo,
+        DescriptorSetLayout
+    );
+    vk_delegate_destroy!(destroy_descriptor_set_layout, DescriptorSetLayout);
+    vk_delegate_destroy!(destroy_pipeline, Pipeline);
+    vk_delegate_create!(create_command_pool, CommandPoolCreateInfo, CommandPool);
+    vk_delegate_destroy!(destroy_command_pool, CommandPool);
+    vk_delegate_create!(create_fence, FenceCreateInfo, Fence);
+    vk_delegate_destroy!(destroy_fence, Fence);
+    vk_delegate_create!(
+        create_descriptor_pool,
+        DescriptorPoolCreateInfo,
+        DescriptorPool
+    );
+    vk_delegate_destroy!(destroy_descriptor_pool, DescriptorPool);
+    vk_delegate_create!(create_semaphore, SemaphoreCreateInfo, Semaphore);
+    vk_delegate_destroy!(destroy_semaphore, Semaphore);
+    vk_delegate_create!(create_sampler, SamplerCreateInfo, Sampler);
+    vk_delegate_destroy!(destroy_sampler, Sampler);
+    vk_delegate_create_many!(
+        allocate_command_buffers,
+        CommandBufferAllocateInfo,
+        CommandBuffer
+    );
+    vk_delegate_destroy_many!(free_command_buffers, CommandPool, CommandBuffer);
 
-    #[inline]
-    pub unsafe fn destroy_descriptor_pool(&self, pool: vk::DescriptorPool) {
-        unsafe {
-            self.device
-                .destroy_descriptor_pool(pool, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn allocate_descriptor_sets(
-        &self,
-        allocate_info: &vk::DescriptorSetAllocateInfo,
-    ) -> VkResult<Vec<vk::DescriptorSet>> {
-        unsafe { self.device.allocate_descriptor_sets(allocate_info) }
-    }
-
-    #[inline]
-    pub unsafe fn free_descriptor_sets(
-        &self,
-        pool: vk::DescriptorPool,
-        descriptor_sets: &[vk::DescriptorSet],
-    ) -> VkResult<()> {
-        unsafe { self.device.free_descriptor_sets(pool, descriptor_sets) }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_bind_descriptor_sets(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        layout: &crate::pipeline::PipelineLayout,
-        first_set: u32,
-        descriptor_sets: &[vk::DescriptorSet],
-        dynamic_offsets: &[u32],
-    ) {
-        unsafe {
-            self.device.cmd_bind_descriptor_sets(
-                command_buffer,
-                layout.bind_point,
-                layout.handle,
-                first_set,
-                descriptor_sets,
-                dynamic_offsets,
-            )
-        }
-    }
-
-    #[inline]
-    pub unsafe fn update_descriptor_sets(
-        &self,
-        descriptor_writes: &[vk::WriteDescriptorSet],
-        descriptor_copies: &[vk::CopyDescriptorSet],
-    ) {
-        unsafe {
-            self.device
-                .update_descriptor_sets(descriptor_writes, descriptor_copies)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_copy_buffer(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        src_buffer: vk::Buffer,
-        dst_buffer: vk::Buffer,
-        regions: &[vk::BufferCopy],
-    ) {
-        unsafe {
-            self.device
-                .cmd_copy_buffer(command_buffer, src_buffer, dst_buffer, regions)
-        }
-    }
-
-    #[inline]
-    pub unsafe fn cmd_copy_buffer_to_image2(
-        &self,
-        command_buffer: vk::CommandBuffer,
-        copy_buffer_to_image_info: &vk::CopyBufferToImageInfo2,
-    ) {
-        unsafe {
-            self.device
-                .cmd_copy_buffer_to_image2(command_buffer, copy_buffer_to_image_info);
-        }
-    }
-
-    #[inline]
-    pub unsafe fn create_sampler(
-        &self,
-        create_info: &vk::SamplerCreateInfo,
-    ) -> VkResult<vk::Sampler> {
-        unsafe {
-            self.device
-                .create_sampler(create_info, self.get_alloc_callbacks())
-        }
-    }
-
-    #[inline]
-    pub unsafe fn destroy_sampler(&self, sampler: vk::Sampler) {
-        unsafe {
-            self.device
-                .destroy_sampler(sampler, self.get_alloc_callbacks())
-        }
-    }
+    vk_delegate_forward!(update_descriptor_sets, (writes: &[WriteDescriptorSet], copies: &[CopyDescriptorSet]), ());
+    vk_delegate_forward!(cmd_copy_buffer2, (buffer: CommandBuffer, info: &CopyBufferInfo2), ());
+    vk_delegate_forward!(cmd_copy_buffer_to_image2, (buffer: CommandBuffer, info: &CopyBufferToImageInfo2), ());
+    vk_delegate_forward!(reset_fences, (fences: &[Fence]), VkResult<()>);
+    vk_delegate_forward!(reset_command_buffer, (buffer: CommandBuffer, flags: CommandBufferResetFlags), VkResult<()>);
+    vk_delegate_forward!(cmd_pipeline_barrier2, (cb: CommandBuffer, info: &DependencyInfo), ());
+    vk_delegate_forward!(device_wait_idle, (), VkResult<()>);
+    vk_delegate_forward!(cmd_bind_pipeline, (cb: CommandBuffer, bind_point: PipelineBindPoint, pipeline: Pipeline), ());
+    vk_delegate_forward!(cmd_set_viewport, (buffer: CommandBuffer, first_viewport: u32, viewports: &[Viewport]), ());
+    vk_delegate_forward!(cmd_set_scissor, (buffer: CommandBuffer, first_scissor: u32, scissors: &[Rect2D]), ());
+    vk_delegate_forward!(cmd_bind_vertex_buffers, (command_buffer: CommandBuffer, first_binding: u32, buffers: &[Buffer], offsets: &[DeviceSize]), ());
+    vk_delegate_forward!(cmd_bind_index_buffer, (command_buffer: CommandBuffer, buffer: Buffer, offset: DeviceSize, index_type: IndexType), ());
+    vk_delegate_forward!(allocate_descriptor_sets, (info: &DescriptorSetAllocateInfo), VkResult<Vec<DescriptorSet>>);
+    vk_delegate_forward!(free_descriptor_sets, (pool: DescriptorPool, sets: &[DescriptorSet]), VkResult<()>);
+    vk_delegate_forward!(begin_command_buffer, (buffer: CommandBuffer,  info: &CommandBufferBeginInfo), VkResult<()>);
+    vk_delegate_forward!(end_command_buffer, (buffer: CommandBuffer), VkResult<()>);
+    vk_delegate_forward!(cmd_begin_rendering, (buffer: CommandBuffer, info: &RenderingInfo), ());
+    vk_delegate_forward!(cmd_end_rendering, (buffer: CommandBuffer), ());
+    vk_delegate_forward!(wait_for_fences, (fences: &[Fence], wait_all: bool, timeout: u64), VkResult<()>);
+    vk_delegate_forward!(queue_submit, (queue: Queue, submits: &[SubmitInfo], fence: Fence), VkResult<()>);
+    vk_delegate_forward!(bind_image_memory, (image: Image, memory: DeviceMemory, offset: DeviceSize), VkResult<()>);
+    vk_delegate_forward!(bind_buffer_memory, (buffer: Buffer, memory: DeviceMemory, offset: DeviceSize), VkResult<()>);
+    vk_delegate_forward!(get_buffer_memory_requirements, (buffer: Buffer), MemoryRequirements);
+    vk_delegate_forward!(get_image_memory_requirements, (image: Image), MemoryRequirements);
+    vk_delegate_forward!(map_memory, (memory: DeviceMemory, offset: DeviceSize, size: DeviceSize, flags: MemoryMapFlags), VkResult<*mut std::ffi::c_void>);
+    vk_delegate_forward!(unmap_memory, (memory: DeviceMemory), ());
+    vk_delegate_forward!(cmd_bind_descriptor_sets,(buffer: CommandBuffer, bind_point: PipelineBindPoint, layout: PipelineLayout, first_set: u32, sets: &[DescriptorSet], dynamic_offsets: &[u32]), ());
 }
 
 impl Drop for Device {
     fn drop(&mut self) {
         unsafe {
             self.device.destroy_device(self.get_alloc_callbacks());
-            self.instance
-                .debug_utils
-                .destroy_debug_utils_messenger(self.debug_messenger, self.get_alloc_callbacks());
+            if let Some(messenger) = self.debug_messenger {
+                self.instance.destroy_debug_utils_messenger(messenger);
+            }
         }
     }
 }

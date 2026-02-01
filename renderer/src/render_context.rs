@@ -1,16 +1,26 @@
 use crate::trace_error;
 
-use math::mat4::Mat4;
-use math::vec2::Vec2;
-use math::vec3::Vec3;
+use math::Mat4;
+use math::Vec2;
+use math::Vec3;
 
 use ash::vk;
+use vulkan::device::SharedDeviceRef;
 use std::rc::Rc;
 
 #[repr(C)]
 pub struct Vertex {
     pub position: Vec3<f32>,
     pub tex_coord: Vec2<f32>,
+}
+
+impl Vertex {
+    pub const fn new(position: Vec3<f32>, tex_coord: Vec2<f32>) -> Self {
+        Self {
+            position,
+            tex_coord,
+        }
+    }
 }
 
 #[repr(C)]
@@ -23,19 +33,19 @@ pub struct CameraUBO {
 
 #[allow(dead_code)]
 pub struct RenderContext {
-    swapchain: vulkan::swapchain::Swapchain,
-    device: Rc<vulkan::device::Device>,
+    swapchain: vulkan::Swapchain,
+    device: SharedDeviceRef,
     command_buffer_executed: Box<[vk::Fence]>,
     image_acquired: Box<[vk::Semaphore]>,
     render_complete: Box<[vk::Semaphore]>,
     command_infos: Box<[(vk::CommandPool, vk::CommandBuffer)]>,
-    depth_images: Box<[vulkan::image::Image]>,
-    pipeline: Rc<vulkan::pipeline::Pipeline>,
-    per_frame_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
-    per_frame_uniform_buffers: Box<[vulkan::buffer::BufferView]>,
-    other_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+    depth_images: Box<[vulkan::Image]>,
+    pipeline: Rc<vulkan::Pipeline>,
+    per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
+    per_frame_uniform_buffers: Box<[vulkan::BufferView]>,
+    other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
     // keeps image alive as long as render context is alive
-    image: Rc<vulkan::image::Image>,
+    image: Rc<vulkan::Image>,
     index: usize,
 }
 
@@ -43,17 +53,17 @@ pub const MAX_FRAME_COUNT: usize = 3;
 
 impl RenderContext {
     pub fn new(
-        device: Rc<vulkan::device::Device>,
+        device: SharedDeviceRef,
         window: &winit::window::Window,
         vertex_shader_path: &std::path::Path,
         fragment_shader_path: &std::path::Path,
         pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
-        per_frame_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
-        per_frame_uniform_buffers: Box<[vulkan::buffer::BufferView]>,
-        other_descriptor_sets: Box<[vulkan::descriptor::DescriptorSet]>,
+        per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
+        per_frame_uniform_buffers: Box<[vulkan::BufferView]>,
+        other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
         image: Rc<vulkan::image::Image>,
-    ) -> crate::result::Result<RenderContext> {
-        let swapchain = vulkan::swapchain::Swapchain::new(device.clone(), window)
+    ) -> crate::Result<RenderContext> {
+        let swapchain = vulkan::Swapchain::new(device.clone(), window)
             .inspect_err(|e| trace_error!(e))?;
 
         let command_buffer_executed = {
@@ -322,7 +332,7 @@ impl RenderContext {
 impl Drop for RenderContext {
     fn drop(&mut self) {
         unsafe {
-            let _ = self.device.wait_idle();
+            let _ = self.device.device_wait_idle();
 
             for (pool, buffer) in self.command_infos.iter_mut() {
                 self.device.free_command_buffers(*pool, &[*buffer]);
@@ -367,8 +377,11 @@ impl RenderContext {
         // Acquire image
         let (swapchain_image_index, swapchain_image_view) = {
             unsafe {
-                self.device
-                    .wait_for_fences(&[self.command_buffer_executed[self.index]])?
+                self.device.wait_for_fences(
+                    &[self.command_buffer_executed[self.index]],
+                    true,
+                    u64::MAX,
+                )?
             };
 
             let (image_index, _) = unsafe {
@@ -518,7 +531,8 @@ impl RenderContext {
 
                 self.device.cmd_bind_descriptor_sets(
                     *command_buffer,
-                    self.pipeline.get_layout(),
+                    self.pipeline.get_layout().bind_point,
+                    self.pipeline.get_layout().handle,
                     0,
                     &[
                         self.per_frame_descriptor_sets[self.index].handle,
@@ -593,6 +607,7 @@ impl RenderContext {
 
             unsafe {
                 self.device.queue_submit(
+                    self.device.queue,
                     &[submit_info],
                     *self.command_buffer_executed.get(self.index).unwrap(),
                 )?

@@ -124,7 +124,8 @@ impl Mat3<f32> {
     }
     #[inline]
     pub const fn mul_vec(&self, v: Vec3<f32>) -> Vec3<f32> {
-        self.c0().scaled(v.x())
+        self.c0()
+            .scaled(v.x())
             .add(self.c1().scaled(v.y()))
             .add(self.c2().scaled(v.z()))
     }

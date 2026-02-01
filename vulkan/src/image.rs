@@ -1,9 +1,12 @@
 use crate::allocator::find_memory_index;
+use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
 use crate::trace_error;
 
+use ash::vk;
+
 pub struct Image {
-    device: std::rc::Rc<crate::device::Device>,
+    device: SharedDeviceRef,
     pub handle: ash::vk::Image,
     pub view: ash::vk::ImageView,
     pub memory: ash::vk::DeviceMemory,
@@ -49,7 +52,7 @@ fn is_stencil_format(format: ash::vk::Format) -> bool {
 #[allow(dead_code)]
 impl Image {
     pub fn new(
-        device: std::rc::Rc<crate::device::Device>,
+        device: SharedDeviceRef,
         create_info: &ImageCreateInfo,
     ) -> Result<Self> {
         let tiling = {
@@ -128,29 +131,29 @@ impl Image {
         let image_view_create_info = ash::vk::ImageViewCreateInfo {
             image,
             view_type: match create_info.image_type {
-                ash::vk::ImageType::TYPE_1D => {
+                vk::ImageType::TYPE_1D => {
                     if create_info.array_layers > 1 {
-                        ash::vk::ImageViewType::TYPE_1D_ARRAY
+                        vk::ImageViewType::TYPE_1D_ARRAY
                     } else {
-                        ash::vk::ImageViewType::TYPE_1D
+                        vk::ImageViewType::TYPE_1D
                     }
                 }
-                ash::vk::ImageType::TYPE_2D => {
+                vk::ImageType::TYPE_2D => {
                     if create_info.array_layers > 1 {
-                        ash::vk::ImageViewType::TYPE_2D_ARRAY
+                        vk::ImageViewType::TYPE_2D_ARRAY
                     } else {
-                        ash::vk::ImageViewType::TYPE_2D
+                        vk::ImageViewType::TYPE_2D
                     }
                 }
-                ash::vk::ImageType::TYPE_3D => ash::vk::ImageViewType::TYPE_3D,
-                _ => ash::vk::ImageViewType::TYPE_1D,
+                vk::ImageType::TYPE_3D => vk::ImageViewType::TYPE_3D,
+                _ => vk::ImageViewType::TYPE_1D,
             },
             format: create_info.format,
-            components: ash::vk::ComponentMapping {
-                r: ash::vk::ComponentSwizzle::IDENTITY,
-                g: ash::vk::ComponentSwizzle::IDENTITY,
-                b: ash::vk::ComponentSwizzle::IDENTITY,
-                a: ash::vk::ComponentSwizzle::IDENTITY,
+            components: vk::ComponentMapping {
+                r: vk::ComponentSwizzle::IDENTITY,
+                g: vk::ComponentSwizzle::IDENTITY,
+                b: vk::ComponentSwizzle::IDENTITY,
+                a: vk::ComponentSwizzle::IDENTITY,
             },
             subresource_range: ash::vk::ImageSubresourceRange {
                 aspect_mask: {
