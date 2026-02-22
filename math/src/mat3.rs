@@ -28,21 +28,6 @@ impl<T> Mat3<T> {
     }
 }
 
-// This function is problomatic.
-// impl Mat3<f32> {
-//     #[inline]
-//     pub fn rotation_euler_xyz(r: Vec3<f32>) -> Self {
-//         let (sx, cx) = r.x().sin_cos();
-//         let (sy, cy) = r.y().sin_cos();
-//         let (sz, cz) = r.z().sin_cos();
-//         Self::from_rows(
-//             Vec3::new(cy * cx, cy * sx, -sy),
-//             Vec3::new(sz * sy * cx - cz * sx, sz * sy * sx + cz * cx, sz * cy),
-//             Vec3::new(cz * sy * cx + sz * sx, cz * sy * sx - sz * cx, cz * cy),
-//         )
-//     }
-// }
-
 #[allow(dead_code)]
 impl<T: Zero + Copy> Mat3<T> {
     fn scaling(s: Vec3<T>) -> Self {

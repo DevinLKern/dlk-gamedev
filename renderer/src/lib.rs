@@ -1,15 +1,17 @@
 mod render_context;
 mod result;
 
+include!(concat!(env!("OUT_DIR"), "/variable_types.rs"));
+include!(concat!(env!("OUT_DIR"), "/shader_paths.rs"));
+include!(concat!(env!("OUT_DIR"), "/entry_points.rs"));
+
 pub use render_context::RenderContext;
-pub use render_context::CameraUBO;
-pub use render_context::Vertex;
-pub use result::Result;
 pub use result::Error;
+pub use result::Result;
 
 use ash::vk;
-use vulkan::device::SharedDeviceRef;
 use std::rc::Rc;
+use vulkan::device::SharedDeviceRef;
 
 pub struct Renderer {
     device: SharedDeviceRef,
@@ -76,17 +78,17 @@ impl Renderer {
     #[inline]
     pub fn create_render_context(
         &self,
-        camera: &crate::render_context::CameraUBO,
+        camera: &crate::CameraUBO,
         window: &winit::window::Window,
         image: Rc<vulkan::Image>,
-    ) -> result::Result<render_context::RenderContext> {
-        let vert_shader_path = std::path::Path::new("compiled-shaders").join("shader.vert.spv");
-        let frag_shader_path = std::path::Path::new("compiled-shaders").join("shader.frag.spv");
+    ) -> result::Result<RenderContext> {
+        let vert_shader_path = std::path::Path::new(&crate::SHADER_VERT);
+        let frag_shader_path = std::path::Path::new(&crate::SHADER_FRAG);
 
-        let vert_spv_module = Rc::new(spirv::ShaderModule::from_file(&vert_shader_path)?);
-        let frag_spv_module = Rc::new(spirv::ShaderModule::from_file(&frag_shader_path)?);
+        let vert_spv_module = Rc::new(spirv::Module::from_file(&vert_shader_path)?);
+        let frag_spv_module = Rc::new(spirv::Module::from_file(&frag_shader_path)?);
 
-        let pipeline_layout = Rc::new(vulkan::PipelineLayout::new_graphics(
+        let pipeline_layout = Rc::new(vulkan::PipelineLayout::new(
             self.device.clone(),
             &vert_spv_module,
             &frag_spv_module,
@@ -135,8 +137,16 @@ impl Renderer {
             };
 
             let per_frame_descriptor_sets = {
-                let layouts: Box<[vk::DescriptorSetLayout]> =
-                    (0..3).map(|_| all_layouts[0].handle.clone()).collect();
+                let layouts: Box<[vk::DescriptorSetLayout]> = (0..3)
+                    .map(|_| {
+                        all_layouts
+                            .iter()
+                            .find(|l| l.set == 0)
+                            .unwrap()
+                            .handle
+                            .clone()
+                    })
+                    .collect();
                 vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
@@ -144,21 +154,31 @@ impl Renderer {
                 )?
             };
             let other_descriptor_sets = {
-                let layouts: Box<[vk::DescriptorSetLayout]> =
-                    all_layouts.into_iter().skip(1).map(|l| l.handle).collect();
+                let layouts = Box::new([all_layouts.iter().find(|l| l.set == 1).unwrap().handle]);
                 vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
-                    &layouts,
+                    layouts.as_ref(),
                 )?
             };
 
             (per_frame_descriptor_sets, other_descriptor_sets)
         };
 
+        let per_frame_uniform_buffer_size = {
+            let obj1 = std::mem::size_of::<crate::CameraUBO>() as u64;
+
+            let alignment = unsafe {
+                let properties = self.device.get_physical_device_properties();
+                properties.limits.min_uniform_buffer_offset_alignment
+            };
+
+            obj1.next_multiple_of(alignment)
+        };
+
         // 3 == maximum number of frames?
         let per_frame_uniform_buffers = self.create_per_frame_unifrom_buffers(
-            std::mem::size_of::<render_context::CameraUBO>() as u64,
+            per_frame_uniform_buffer_size, // should get aligned
             per_frame_descriptor_sets.len() as u64,
         )?;
         for bv in per_frame_uniform_buffers.iter() {
@@ -171,7 +191,7 @@ impl Renderer {
                     let dst = buffer.map_memory(*offset, *size)?;
                     let data = camera;
 
-                    std::ptr::copy_nonoverlapping(data, dst as *mut render_context::CameraUBO, 1);
+                    std::ptr::copy_nonoverlapping(data, dst as *mut crate::CameraUBO, 1);
 
                     buffer.unmap();
                 },
@@ -231,7 +251,7 @@ impl Renderer {
             unsafe { self.device.update_descriptor_sets(&descriptor_writes, &[]) };
         }
 
-        render_context::RenderContext::new(
+        crate::RenderContext::new(
             self.device.clone(),
             window,
             &vert_shader_path,
@@ -243,7 +263,7 @@ impl Renderer {
             image,
         )
     }
-    fn get_command_buffer(&self) -> result::Result<vk::CommandBuffer> {
+    fn get_command_buffer(&self) -> Result<vk::CommandBuffer> {
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
             command_pool: self.command_pool,
             command_buffer_count: 1,

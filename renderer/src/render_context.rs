@@ -1,35 +1,8 @@
 use crate::trace_error;
 
-use math::Mat4;
-use math::Vec2;
-use math::Vec3;
-
 use ash::vk;
-use vulkan::device::SharedDeviceRef;
 use std::rc::Rc;
-
-#[repr(C)]
-pub struct Vertex {
-    pub position: Vec3<f32>,
-    pub tex_coord: Vec2<f32>,
-}
-
-impl Vertex {
-    pub const fn new(position: Vec3<f32>, tex_coord: Vec2<f32>) -> Self {
-        Self {
-            position,
-            tex_coord,
-        }
-    }
-}
-
-#[repr(C)]
-#[derive(Clone)]
-pub struct CameraUBO {
-    pub model: Mat4<f32>,
-    pub view: Mat4<f32>,
-    pub proj: Mat4<f32>,
-}
+use vulkan::{Pipeline, device::SharedDeviceRef};
 
 #[allow(dead_code)]
 pub struct RenderContext {
@@ -63,8 +36,8 @@ impl RenderContext {
         other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
         image: Rc<vulkan::image::Image>,
     ) -> crate::Result<RenderContext> {
-        let swapchain = vulkan::Swapchain::new(device.clone(), window)
-            .inspect_err(|e| trace_error!(e))?;
+        let swapchain =
+            vulkan::Swapchain::new(device.clone(), window).inspect_err(|e| trace_error!(e))?;
 
         let command_buffer_executed = {
             let mut fences: Vec<vk::Fence> = Vec::with_capacity(MAX_FRAME_COUNT);
@@ -225,90 +198,160 @@ impl RenderContext {
 
             images.into_boxed_slice()
         };
-        let pipeline = {
-            let (spv_vertex_shader_module, vk_vertex_shader_module) = unsafe {
-                vulkan::pipeline::create_shader_modules(device.clone(), vertex_shader_path)
-            }
-            .inspect_err(|e| {
-                trace_error!(e);
-                unsafe {
-                    for (pool, buffer) in command_infos.iter() {
-                        device.free_command_buffers(*pool, &[*buffer]);
-                        device.destroy_command_pool(*pool);
-                    }
-                    for semaphore in image_acquired.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for semaphore in render_complete.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for fence in command_buffer_executed.iter() {
-                        device.destroy_fence(*fence);
-                    }
-                }
-            })?;
-            let (spv_frag_shader_module, vk_frag_shader_module) = unsafe {
-                vulkan::pipeline::create_shader_modules(device.clone(), fragment_shader_path)
-            }
-            .inspect_err(|e| {
-                trace_error!(e);
-                unsafe {
-                    device.destroy_shader_module(vk_vertex_shader_module);
-                    for (pool, buffer) in command_infos.iter() {
-                        device.free_command_buffers(*pool, &[*buffer]);
-                        device.destroy_command_pool(*pool);
-                    }
-                    for semaphore in image_acquired.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for semaphore in render_complete.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for fence in command_buffer_executed.iter() {
-                        device.destroy_fence(*fence);
-                    }
-                }
-            })?;
 
-            let color_formats = Rc::new([swapchain.get_format()]);
-            let pipeline_create_info = vulkan::pipeline::PipelineCreateInfo::Graphics {
-                vk_vertex_shader_module,
-                spv_vertex_shader_module,
-                vk_frag_shader_module,
-                spv_frag_shader_module,
-                layout: pipeline_layout,
-                color_formats,
-                depth_format: depth_stencil_format,
-                stencil_format: depth_stencil_format,
+        let pipeline: Rc<vulkan::Pipeline> = {
+            let vert_entry_point_name =
+                std::ffi::CString::new(crate::ENTRY_POINT_NAME_SHADER_VERT).unwrap();
+            let frag_entry_point_name =
+                std::ffi::CString::new(crate::ENTRY_POINT_NAME_SHADER_FRAG).unwrap();
+
+            let vert_shader_module = vulkan::ShaderModule::new(vertex_shader_path, device.clone())?;
+            let frag_shader_module =
+                vulkan::ShaderModule::new(fragment_shader_path, device.clone())?;
+
+            let stages = {
+                let vert_stage = vk::PipelineShaderStageCreateInfo {
+                    stage: vk::ShaderStageFlags::VERTEX,
+                    module: unsafe { *vert_shader_module.raw() },
+                    p_name: vert_entry_point_name.as_ptr(),
+                    ..Default::default()
+                };
+                let frag_stage = vk::PipelineShaderStageCreateInfo {
+                    stage: vk::ShaderStageFlags::FRAGMENT,
+                    module: unsafe { *frag_shader_module.raw() },
+                    p_name: frag_entry_point_name.as_ptr(),
+                    ..Default::default()
+                };
+                [vert_stage, frag_stage]
             };
-            let pipeline = vulkan::pipeline::Pipeline::new(device.clone(), &pipeline_create_info)
-                .inspect_err(|e| {
-                trace_error!(e);
-                unsafe {
-                    device.destroy_shader_module(vk_frag_shader_module);
-                    device.destroy_shader_module(vk_vertex_shader_module);
-                    for (pool, buffer) in command_infos.iter() {
-                        device.free_command_buffers(*pool, &[*buffer]);
-                        device.destroy_command_pool(*pool);
-                    }
-                    for semaphore in image_acquired.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for semaphore in render_complete.iter() {
-                        device.destroy_semaphore(*semaphore);
-                    }
-                    for fence in command_buffer_executed.iter() {
-                        device.destroy_fence(*fence);
-                    }
-                }
-            })?;
 
-            unsafe {
-                device.destroy_shader_module(vk_vertex_shader_module);
-                device.destroy_shader_module(vk_frag_shader_module);
-            }
+            let (vertex_input_attributes, vertex_input_bindings) = {
+                let vk_input_attributes = [
+                    vk::VertexInputAttributeDescription {
+                        location: 0,
+                        binding: 0,
+                        format: vk::Format::R32G32B32_SFLOAT,
+                        offset: std::mem::offset_of!(crate::ShaderVertVertex, position) as u32,
+                    },
+                    vk::VertexInputAttributeDescription {
+                        location: 1,
+                        binding: 0,
+                        format: vk::Format::R32G32_SFLOAT,
+                        offset: std::mem::offset_of!(crate::ShaderVertVertex, tex_coord) as u32,
+                    },
+                ];
 
-            Rc::new(pipeline)
+                let vk_binding_descriptions = [vk::VertexInputBindingDescription {
+                    binding: 0,
+                    stride: std::mem::size_of::<crate::ShaderVertVertex>() as u32,
+                    input_rate: vk::VertexInputRate::VERTEX,
+                }];
+
+                (vk_input_attributes, vk_binding_descriptions)
+            };
+            let vertex_input_state = vk::PipelineVertexInputStateCreateInfo {
+                vertex_binding_description_count: vertex_input_bindings.len() as u32,
+                p_vertex_binding_descriptions: vertex_input_bindings.as_ptr(),
+                vertex_attribute_description_count: vertex_input_attributes.len() as u32,
+                p_vertex_attribute_descriptions: vertex_input_attributes.as_ptr(),
+                ..Default::default()
+            };
+            let input_assembly_state = vk::PipelineInputAssemblyStateCreateInfo {
+                topology: vk::PrimitiveTopology::TRIANGLE_LIST,
+                primitive_restart_enable: vk::FALSE,
+                ..Default::default()
+            };
+            let viewport_state = vk::PipelineViewportStateCreateInfo {
+                viewport_count: 1,
+                p_viewports: std::ptr::null(), // Since dynamic viewports is enabled this can be null
+                scissor_count: 1,
+                p_scissors: std::ptr::null(), // this is also be dynamic
+                ..Default::default()
+            };
+            let rasterization_state = vk::PipelineRasterizationStateCreateInfo {
+                depth_clamp_enable: vk::FALSE,
+                rasterizer_discard_enable: vk::FALSE,
+                polygon_mode: vk::PolygonMode::FILL,
+                cull_mode: vk::CullModeFlags::NONE,
+                front_face: vk::FrontFace::CLOCKWISE,
+                depth_bias_enable: vk::FALSE,
+                depth_bias_constant_factor: 0.0,
+                depth_bias_clamp: 0.0,
+                depth_bias_slope_factor: 0.0,
+                line_width: 1.0, // dyamic states is on and VK_DYNAMIC_STATE_LINE_WIDTH is not
+                ..Default::default()
+            };
+            let multisample_state = vk::PipelineMultisampleStateCreateInfo {
+                rasterization_samples: vk::SampleCountFlags::TYPE_1,
+                sample_shading_enable: vk::FALSE,
+                ..Default::default()
+            };
+            let depth_stencil_state = vk::PipelineDepthStencilStateCreateInfo {
+                depth_test_enable: vk::TRUE,
+                depth_write_enable: vk::TRUE,
+                depth_compare_op: vk::CompareOp::LESS,
+                depth_bounds_test_enable: vk::FALSE,
+                stencil_test_enable: vk::FALSE,
+                min_depth_bounds: 0.0,
+                max_depth_bounds: 1.0,
+                ..Default::default()
+            };
+            let attachments = [vk::PipelineColorBlendAttachmentState {
+                blend_enable: vk::FALSE,
+                src_color_blend_factor: vk::BlendFactor::ZERO,
+                dst_color_blend_factor: vk::BlendFactor::ZERO,
+                color_blend_op: vk::BlendOp::ADD,
+                src_alpha_blend_factor: vk::BlendFactor::ZERO,
+                dst_alpha_blend_factor: vk::BlendFactor::ZERO,
+                alpha_blend_op: vk::BlendOp::ADD,
+                color_write_mask: vk::ColorComponentFlags::RGBA,
+            }];
+            let color_blend_state = vk::PipelineColorBlendStateCreateInfo {
+                logic_op_enable: vk::FALSE,
+                logic_op: vk::LogicOp::COPY,
+                attachment_count: attachments.len() as u32,
+                p_attachments: attachments.as_ptr(),
+                blend_constants: [0.0, 0.0, 0.0, 0.0],
+                ..Default::default()
+            };
+            let dynamic_states = [vk::DynamicState::VIEWPORT, vk::DynamicState::SCISSOR];
+            let dynamic_state = vk::PipelineDynamicStateCreateInfo {
+                dynamic_state_count: dynamic_states.len() as u32,
+                p_dynamic_states: dynamic_states.as_ptr(),
+                ..Default::default()
+            };
+            let color_formats = [swapchain.get_format()];
+            let pipeline_rendering_info = vk::PipelineRenderingCreateInfo {
+                color_attachment_count: color_formats.len() as u32,
+                p_color_attachment_formats: color_formats.as_ptr(),
+                depth_attachment_format: depth_stencil_format,
+                stencil_attachment_format: depth_stencil_format,
+                ..Default::default()
+            };
+            let pipeline_create_info = vk::GraphicsPipelineCreateInfo {
+                p_next: &pipeline_rendering_info as *const _ as *const std::ffi::c_void,
+                stage_count: stages.len() as u32,
+                p_stages: stages.as_ptr(),
+                p_vertex_input_state: &vertex_input_state,
+                p_input_assembly_state: &input_assembly_state,
+                p_tessellation_state: std::ptr::null(),
+                p_viewport_state: &viewport_state,
+                p_rasterization_state: &rasterization_state,
+                p_multisample_state: &multisample_state,
+                p_depth_stencil_state: &depth_stencil_state,
+                p_color_blend_state: &color_blend_state,
+                p_dynamic_state: &dynamic_state,
+                layout: pipeline_layout.handle,
+                render_pass: vk::RenderPass::null(), // dynamic rendering is enabled
+                subpass: 0,
+                ..Default::default()
+            };
+
+            Rc::new(Pipeline::new_graphics(
+                device.clone(),
+                pipeline_layout,
+                &pipeline_create_info,
+            )?)
         };
 
         Ok(RenderContext {
@@ -352,7 +395,7 @@ impl Drop for RenderContext {
 }
 
 impl RenderContext {
-    pub fn update_current_camera_ubo(&mut self, camera: &CameraUBO) {
+    pub fn update_current_camera_ubo(&mut self, camera: &crate::CameraUBO) {
         match &self.per_frame_uniform_buffers[self.index] {
             vulkan::buffer::BufferView::Uniform {
                 buffer,
@@ -362,7 +405,7 @@ impl RenderContext {
                 let dst = buffer.map_memory(*offset, *size).unwrap();
                 let src = [camera.clone()];
 
-                std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut CameraUBO, 1);
+                std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut crate::CameraUBO, 1);
 
                 buffer.unmap();
             },

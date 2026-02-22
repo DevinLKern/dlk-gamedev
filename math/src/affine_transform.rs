@@ -1,4 +1,4 @@
-use crate::{Vec3, Vec4, Mat4, Quat};
+use crate::{Mat4, Quat, Vec3, Vec4};
 
 #[allow(dead_code)]
 pub struct AffineTransform {
@@ -55,4 +55,3 @@ impl AffineTransform {
         r.mul(&t).mul(&s)
     }
 }
-

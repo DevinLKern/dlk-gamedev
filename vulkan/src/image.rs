@@ -51,10 +51,7 @@ fn is_stencil_format(format: ash::vk::Format) -> bool {
 
 #[allow(dead_code)]
 impl Image {
-    pub fn new(
-        device: SharedDeviceRef,
-        create_info: &ImageCreateInfo,
-    ) -> Result<Self> {
+    pub fn new(device: SharedDeviceRef, create_info: &ImageCreateInfo) -> Result<Self> {
         let tiling = {
             let format_properties =
                 unsafe { device.get_physical_device_format_properties(create_info.format) };

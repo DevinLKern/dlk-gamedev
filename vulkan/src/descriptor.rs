@@ -5,19 +5,6 @@ use std::rc::Rc;
 use ash::prelude::VkResult;
 use ash::vk;
 
-fn spirv_uniform_type_to_vk_descriptor_type(
-    uniform_type: &spirv::UniformType,
-) -> vk::DescriptorType {
-    match uniform_type {
-        spirv::UniformType::Sampler => vk::DescriptorType::SAMPLER,
-        spirv::UniformType::SampledImage => vk::DescriptorType::COMBINED_IMAGE_SAMPLER, // TODO: fix this. it's VERY questionable.
-        spirv::UniformType::StorageImage => vk::DescriptorType::STORAGE_IMAGE,
-        spirv::UniformType::UniformBuffer => vk::DescriptorType::UNIFORM_BUFFER,
-        spirv::UniformType::StorageBuffer => vk::DescriptorType::STORAGE_BUFFER,
-        _ => vk::DescriptorType::UNIFORM_BUFFER,
-    }
-}
-
 #[allow(dead_code)]
 #[derive(Debug)]
 pub struct DescriptorSetLayoutBindingInfo {
@@ -39,7 +26,6 @@ impl std::fmt::Display for DescriptorSetLayoutBindingInfo {
     }
 }
 
-// #[derive(Debug)]
 pub struct DescriptorSetLayout {
     device: SharedDeviceRef,
     pub set: u32,
@@ -48,46 +34,33 @@ pub struct DescriptorSetLayout {
 }
 
 impl DescriptorSetLayout {
-    pub(crate) fn new(
+    pub fn new_raw(
         device: SharedDeviceRef,
         set: u32,
-        bindings: &[(vk::ShaderStageFlags, spirv::UniformInfo)],
+        bindings: Box<[vk::DescriptorSetLayoutBinding]>,
     ) -> VkResult<DescriptorSetLayout> {
-        let owned_bindings: Box<[DescriptorSetLayoutBindingInfo]> = bindings
-            .iter()
-            .map(|(f, u)| DescriptorSetLayoutBindingInfo {
-                binding: u.binding,
-                descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
-                descriptor_count: 1,
-                stage_flags: *f,
-                p_immutable_shader: std::ptr::null(),
-                size: u.size,
-            })
-            .collect();
-
-        let handle = {
-            let vk_bindings: Box<[vk::DescriptorSetLayoutBinding<'_>]> = bindings
-                .iter()
-                .map(|(f, u)| vk::DescriptorSetLayoutBinding {
-                    binding: u.binding,
-                    descriptor_type: spirv_uniform_type_to_vk_descriptor_type(&u.uniform_type),
-                    descriptor_count: 1,
-                    stage_flags: *f,
-                    ..Default::default()
-                })
-                .collect();
-            let create_info = vk::DescriptorSetLayoutCreateInfo {
-                binding_count: vk_bindings.len() as u32,
-                p_bindings: vk_bindings.as_ptr(),
-                ..Default::default()
-            };
-            unsafe { device.create_descriptor_set_layout(&create_info) }?
+        let create_info = vk::DescriptorSetLayoutCreateInfo {
+            binding_count: bindings.len() as u32,
+            p_bindings: bindings.as_ptr(),
+            ..Default::default()
         };
+
+        let handle = unsafe { device.create_descriptor_set_layout(&create_info) }?;
 
         Ok(DescriptorSetLayout {
             device,
-            bindings: owned_bindings,
             set,
+            bindings: bindings
+                .into_iter()
+                .map(|b| DescriptorSetLayoutBindingInfo {
+                    binding: b.binding,
+                    descriptor_type: b.descriptor_type,
+                    descriptor_count: b.descriptor_count,
+                    stage_flags: b.stage_flags,
+                    p_immutable_shader: b.p_immutable_samplers,
+                    size: None,
+                })
+                .collect(),
             handle,
         })
     }
@@ -125,7 +98,10 @@ pub struct DescriptorPool {
 }
 
 impl DescriptorPool {
-    pub fn new(device: SharedDeviceRef, create_info: &vk::DescriptorPoolCreateInfo) -> Result<Self> {
+    pub fn new(
+        device: SharedDeviceRef,
+        create_info: &vk::DescriptorPoolCreateInfo,
+    ) -> Result<Self> {
         let pool = unsafe { device.create_descriptor_pool(create_info) }?;
         Ok(Self {
             device,

@@ -1,10 +1,4 @@
-use math::{
-    Mat4,
-    Quat,
-    Vec3,
-    Vec4,
-    RigidTransform,
-};
+use math::{Mat4, Quat, RigidTransform, Vec3, Vec4};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
 
@@ -34,7 +28,7 @@ impl Camera {
     pub fn new(fov_y: f32, aspect_ratio: f32, position: Vec3<f32>, yaw: f32, pitch: f32) -> Self {
         let transform = RigidTransform::new(
             position,
-            Quat::unit_from_angle_axis(std::f32::consts::PI, WORLD_UP)
+            Quat::unit_from_angle_axis(std::f32::consts::PI, WORLD_UP),
         );
         let mut r = Self {
             transform,

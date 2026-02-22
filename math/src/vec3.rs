@@ -52,6 +52,10 @@ impl<T: Zero + Copy> Vec3<T> {
     pub const fn into_vec4(self) -> Vec4<T> {
         Vec4::new(self.x(), self.y(), self.z(), T::ZERO)
     }
+    #[inline]
+    pub const fn into_arr(self) -> [T; 3] {
+        [self.x(), self.y(), self.z()]
+    }
 }
 
 impl Vec3<f32> {
@@ -198,7 +202,7 @@ mod tests {
         let b = Vec3::<f32>::new(17.0, 33.0, 65.0);
         let c: f32 = 767.0;
 
-        assert_eq!(a.dot(&b), c);
+        assert_eq!(a.dot(b), c);
     }
     #[test]
     fn cross1() {
@@ -206,7 +210,7 @@ mod tests {
         let b = Vec3::<f32>::new(17.0, 33.0, 65.0);
         let c = Vec3::<f32>::new(28.0, 88.0, -52.0);
 
-        assert_eq!(a.cross(&b), c);
+        assert_eq!(a.cross(b), c);
     }
     #[test]
     fn cross2() {
@@ -217,7 +221,7 @@ mod tests {
         // d == a x b x c
         let d = Vec3::<f32>::new(58508.0, -20864.0, -3804.0);
 
-        assert_eq!(a.cross(&b).cross(&c), d);
+        assert_eq!(a.cross(b).cross(c), d);
     }
     #[test]
     fn normalize1() {

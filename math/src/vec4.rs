@@ -65,6 +65,10 @@ impl<T> Vec4<T> {
     pub const fn w_mut(&mut self) -> &mut T {
         &mut self.0[3]
     }
+    #[inline]
+    pub fn into_arr(self) -> [T; 4] {
+        self.0
+    }
 }
 
 impl Vec4<f32> {

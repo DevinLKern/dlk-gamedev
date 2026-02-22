@@ -76,7 +76,9 @@ impl Device {
                 instance
                     .raw()
                     .enumerate_physical_devices()
-                    .inspect_err(|e| { trace_error!(e); })
+                    .inspect_err(|e| {
+                        trace_error!(e);
+                    })
             }?;
 
             let viable_physical_devices: Box<[(usize, vk::PhysicalDevice)]> = all_physical_devices
@@ -124,7 +126,9 @@ impl Device {
 
             if viable_physical_devices.len() == 0 {
                 if let Some(messenger) = debug_messenger {
-                    unsafe { instance.destroy_debug_utils_messenger(messenger); }
+                    unsafe {
+                        instance.destroy_debug_utils_messenger(messenger);
+                    }
                 }
                 return Err(Error::NoViablePhysicalDevices);
             }
@@ -204,7 +208,7 @@ impl Device {
                     .inspect_err(|e| {
                         trace_error!(e);
                         if let Some(messenger) = debug_messenger {
-                            instance.destroy_debug_utils_messenger(messenger); 
+                            instance.destroy_debug_utils_messenger(messenger);
                         }
                     })?
             }
@@ -229,7 +233,8 @@ impl Device {
             swapchain_loader,
             queue,
             queue_family_index: queue_create_info.queue_family_index,
-        }.into())
+        }
+        .into())
     }
 
     #[inline]
@@ -305,7 +310,7 @@ impl Device {
     }
 
     #[inline]
-    pub(crate) unsafe fn create_graphics_pipelines(
+    pub unsafe fn create_graphics_pipelines(
         &self,
         pipeline_cache: vk::PipelineCache,
         create_infos: &[vk::GraphicsPipelineCreateInfo],

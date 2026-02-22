@@ -26,10 +26,7 @@ pub struct Buffer {
 }
 
 impl Buffer {
-    pub fn new(
-        device: SharedDeviceRef,
-        create_info: &BufferCreateInfo,
-    ) -> Result<Self> {
+    pub fn new(device: SharedDeviceRef, create_info: &BufferCreateInfo) -> Result<Self> {
         let buffer_create_info = ash::vk::BufferCreateInfo {
             size: create_info.size,
             usage: create_info.usage,

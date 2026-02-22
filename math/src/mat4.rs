@@ -95,6 +95,16 @@ impl<T: Copy> Mat4<T> {
     pub const fn c3(&self) -> Vec4<T> {
         self.0[3]
     }
+
+    #[inline]
+    pub fn into_2d_arr(self) -> [[T; 4]; 4] {
+        [
+            self.c0().into_arr(),
+            self.c1().into_arr(),
+            self.c2().into_arr(),
+            self.c3().into_arr(),
+        ]
+    }
 }
 
 impl<T> Mat4<T> {

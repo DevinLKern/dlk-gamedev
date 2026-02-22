@@ -2,6 +2,7 @@
 pub enum Error {
     InvalidFileLength(usize),
     IncorrectMagicWord(u32),
+    InvalidVersion((u32, u32)),
     InvalidOperandEnd((usize, usize)),
     Io(std::io::Error),
     NoAssociatedType(u32),
@@ -24,6 +25,12 @@ impl std::fmt::Display for Error {
                 write!(
                     f,
                     "Incorrect magic word: expected SPIR-V magic, got {word:#X}"
+                )
+            }
+            Self::InvalidVersion((found, expected)) => {
+                write!(
+                    f,
+                    "Incorrect version: expected {expected:#X}, found {found:#X}"
                 )
             }
             Self::InvalidOperandEnd((start, end)) => {

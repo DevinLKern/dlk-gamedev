@@ -18,11 +18,9 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use math::{Quat, Zero};
-use math::Vec2;
-use math::Vec3;
-use math::Mat4;
 use math::Identity;
+use math::Quat;
+use math::Vec3;
 
 macro_rules! trace_error {
     ($e:expr) => {
@@ -59,16 +57,28 @@ impl Application {
         let device = vulkan::Device::new(instance)?;
         let renderer = renderer::Renderer::new(device)?;
 
-        const VERTEX_BUFFER_DATA: [renderer::Vertex; 4] = {
+        const VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 4] = {
             const TR: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT);
             const TL: Vec3<f32> = WORLD_UP.add(WORLD_RIGHT.scaled(-1.0));
             const BR: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT);
             const BL: Vec3<f32> = WORLD_UP.scaled(-1.0).add(WORLD_RIGHT.scaled(-1.0));
             [
-                renderer::Vertex::new(TL, Vec2::new(1.0, 0.0)),
-                renderer::Vertex::new(TR, Vec2::new(0.0, 0.0)),
-                renderer::Vertex::new(BR, Vec2::new(0.0, 1.0)),
-                renderer::Vertex::new(BL, Vec2::new(1.0, 1.0)),
+                renderer::ShaderVertVertex {
+                    position: TL.into_arr(),
+                    tex_coord: [1.0, 0.0],
+                },
+                renderer::ShaderVertVertex {
+                    position: TR.into_arr(),
+                    tex_coord: [0.0, 0.0],
+                },
+                renderer::ShaderVertVertex {
+                    position: BR.into_arr(),
+                    tex_coord: [0.0, 1.0],
+                },
+                renderer::ShaderVertVertex {
+                    position: BL.into_arr(),
+                    tex_coord: [1.0, 1.0],
+                },
             ]
         };
         const INDEX_BUFFER_DATA: [u32; 6] = [0, 1, 2, 2, 3, 0];
@@ -77,8 +87,7 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     VERTEX_BUFFER_DATA.as_ptr() as *const u8,
-                    VERTEX_BUFFER_DATA.len()
-                        * std::mem::size_of::<renderer::Vertex>(),
+                    VERTEX_BUFFER_DATA.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
@@ -88,8 +97,7 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     INDEX_BUFFER_DATA.as_ptr() as *const u8,
-                    INDEX_BUFFER_DATA.len()
-                        * std::mem::size_of::<renderer::Vertex>(),
+                    INDEX_BUFFER_DATA.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
@@ -120,7 +128,11 @@ impl Application {
             index_buffer,
             image,
             exiting: false,
-            model_transform: math::AffineTransform{position: WORLD_FORWARDS.scaled(0.75), orientation: Quat::IDENTITY, scalar: model_scale},
+            model_transform: math::AffineTransform {
+                position: WORLD_FORWARDS.scaled(0.75),
+                orientation: Quat::IDENTITY,
+                scalar: model_scale,
+            },
         })
     }
 }
@@ -153,7 +165,12 @@ impl Application {
                     camera.set_aspect_ratio(aspect_ratio);
                 }
 
-                let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
+                let camera_ubo = renderer::CameraUBO {
+                    model: self.model_transform.as_mat4().into_2d_arr(),
+                    view: camera.get_view_matrix().into_2d_arr(),
+                    proj: camera.get_projection_matrix().into_2d_arr(),
+                    ..Default::default()
+                };
                 let new_context =
                     self.renderer
                         .create_render_context(&camera_ubo, window, self.image.clone())?;
@@ -163,7 +180,12 @@ impl Application {
             WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
 
-                let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
+                let camera_ubo = renderer::CameraUBO {
+                    model: self.model_transform.as_mat4().into_2d_arr(),
+                    view: camera.get_view_matrix().into_2d_arr(),
+                    proj: camera.get_projection_matrix().into_2d_arr(),
+                    ..Default::default()
+                };
                 context.update_current_camera_ubo(&camera_ubo);
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
@@ -363,7 +385,12 @@ impl ApplicationHandler for Application {
             Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
         };
         let window_id = window.id();
-        let camera_ubo = renderer::CameraUBO { model: self.model_transform.as_mat4(), view: camera.get_view_matrix(), proj: camera.get_projection_matrix() };
+        let camera_ubo = renderer::CameraUBO {
+            model: self.model_transform.as_mat4().into_2d_arr(),
+            view: camera.get_view_matrix().into_2d_arr(),
+            proj: camera.get_projection_matrix().into_2d_arr(),
+            ..Default::default()
+        };
         let context =
             match self
                 .renderer
@@ -436,19 +463,12 @@ impl ApplicationHandler for Application {
 }
 
 fn main() -> Result<()> {
+    if std::env::args().len() != 2 {
+        return Err(Error::IncorrectProgramUsage);
+    }
+
     let img_path = {
         let args: Vec<String> = std::env::args().collect();
-        if args.len() < 3 {
-            for arg in args.iter() {
-                println!("{}", arg);
-            }
-            let e = result::Error::IncorrectProgramUsage;
-            println!("{}", e);
-            return Err(e);
-        }
-
-        std::env::set_current_dir(args[args.len() - 2].clone())?;
-
         std::path::PathBuf::from(args[args.len() - 1].clone())
     };
     let event_loop = EventLoop::new()?;

@@ -1,6 +1,6 @@
 use crate::{Error, Result, trace_error};
-use ash::vk::{self, AllocationCallbacks};
 use ash::prelude::VkResult;
+use ash::vk::{self, AllocationCallbacks};
 
 unsafe extern "system" fn vulkan_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
@@ -124,10 +124,10 @@ impl Instance {
         };
 
         let debug_utils = if debug_enabled {
-                Some(ash::ext::debug_utils::Instance::new(&entry, &instance))
-            } else {
-                None
-            };
+            Some(ash::ext::debug_utils::Instance::new(&entry, &instance))
+        } else {
+            None
+        };
 
         let surface_loader = ash::khr::surface::Instance::new(&entry, &instance);
 
@@ -143,7 +143,8 @@ impl Instance {
     pub const fn allocation_callbacks_ref(&self) -> Option<&AllocationCallbacks<'_>> {
         self.allocation_callbacks.as_ref()
     }
-    #[inline] pub const fn raw(&self) -> &ash::Instance {
+    #[inline]
+    pub const fn raw(&self) -> &ash::Instance {
         &self.instance
     }
     pub fn create_debug_utils_messenger(&self) -> VkResult<Option<vk::DebugUtilsMessengerEXT>> {
@@ -160,8 +161,10 @@ impl Instance {
                 p_user_data: std::ptr::null_mut(),
                 ..Default::default()
             };
-            
-            let res = unsafe { utils.create_debug_utils_messenger(&create_info, self.allocation_callbacks_ref()) }?;
+
+            let res = unsafe {
+                utils.create_debug_utils_messenger(&create_info, self.allocation_callbacks_ref())
+            }?;
             Ok(Some(res))
         } else {
             Ok(None)
@@ -169,7 +172,9 @@ impl Instance {
     }
     pub unsafe fn destroy_debug_utils_messenger(&self, messenger: vk::DebugUtilsMessengerEXT) {
         if let Some(utils) = self.debug_utils.as_ref() {
-            unsafe { utils.destroy_debug_utils_messenger(messenger, self.allocation_callbacks_ref()) };
+            unsafe {
+                utils.destroy_debug_utils_messenger(messenger, self.allocation_callbacks_ref())
+            };
         }
     }
 }
@@ -182,4 +187,3 @@ impl Drop for Instance {
         }
     }
 }
-
