@@ -6,11 +6,6 @@ use crate::trace_error;
 use ash::vk;
 use std::rc::Rc;
 
-pub enum IndexType {
-    UInt32,
-    UInt16,
-}
-
 pub struct BufferCreateInfo {
     pub size: vk::DeviceSize,
     pub usage: vk::BufferUsageFlags,
@@ -112,71 +107,63 @@ impl Drop for Buffer {
     }
 }
 
-pub enum BufferView {
-    Vertex {
-        buffer: Rc<Buffer>,
-        vertex_count: u32,
-        instance_count: u32,
-        first_vertex: u32,
-        first_instance: u32,
-    },
-    Index {
-        buffer: Rc<Buffer>,
-        index_count: u32,
-        instance_count: u32,
-        first_index: u32,
-        index_type: vk::IndexType,
-    },
-    Uniform {
-        buffer: Rc<Buffer>,
-        offset: vk::DeviceSize,
-        size: vk::DeviceSize,
-    },
-    DynamicUniform {
-        buffer: Rc<Buffer>,
-        offset: vk::DeviceSize,
-        size: vk::DeviceSize,
-    },
+pub struct VertexBV {
+    pub buffer: Rc<Buffer>,
+    pub vertex_count: u32,
+    pub instance_count: u32,
+    pub first_binding: u32,
+    pub offset: u64,
 }
 
-impl BufferView {
-    pub unsafe fn bind(&self, command_buffer: vk::CommandBuffer) {
-        match self {
-            Self::Vertex { buffer, .. } => unsafe {
-                buffer
-                    .device
-                    .cmd_bind_vertex_buffers(command_buffer, 0, &[buffer.handle], &[0])
-            },
-            Self::Index {
-                buffer, index_type, ..
-            } => unsafe {
-                buffer
-                    .device
-                    .cmd_bind_index_buffer(command_buffer, buffer.handle, 0, *index_type)
-            },
-            _ => todo!(),
+impl VertexBV {
+    pub unsafe fn bind(&self, cmd: vk::CommandBuffer) {
+        let buffers = [self.buffer.handle];
+        let offsets = [self.offset];
+        unsafe {
+            self.buffer.device.cmd_bind_vertex_buffers(cmd, self.first_binding, &buffers, &offsets);
         }
     }
 
-    pub unsafe fn draw(&self, command_buffer: vk::CommandBuffer) {
-        match self {
-            Self::Index {
-                buffer,
-                index_count,
-                instance_count,
-                first_index,
-                ..
-            } => unsafe {
-                buffer.device.cmd_draw_indexed(
-                    command_buffer,
-                    *index_count,
-                    *instance_count,
-                    *first_index,
-                    0,
-                    0,
-                );
-            },
-            _ => todo!(),
+    pub unsafe fn draw(&self, _cmd: vk::CommandBuffer) {
+        todo!()
+    }
+}
+
+pub struct IndexBV {
+    pub buffer: Rc<Buffer>,
+    pub offset: vk::DeviceSize,
+    pub index_count: u32,
+    pub instance_count: u32,
+    pub first_index: u32,
+    pub vertex_offset: i32,
+    pub first_instance: u32,
+    pub index_type: vk::IndexType,
+}
+
+impl IndexBV {
+    pub unsafe fn bind(&self, cmd: vk::CommandBuffer) {
+        unsafe {
+            self.buffer.device
+                .cmd_bind_index_buffer(cmd, self.buffer.handle, self.offset, self.index_type)
         }
     }
+
+    pub unsafe fn draw(&self, cmd: vk::CommandBuffer) {
+        unsafe {
+            self.buffer.device
+                .cmd_draw_indexed(cmd, self.index_count, self.instance_count, self.first_index, self.vertex_offset, self.first_instance);
+        }
+    }
+}
+
+pub struct UniformBV {
+    pub buffer: Rc<Buffer>,
+    pub offset: vk::DeviceSize,
+    pub size: vk::DeviceSize,
+}
+
+pub struct DynamicUniformBV {
+    pub buffer: Rc<Buffer>,
+    pub offset: vk::DeviceSize,
+    pub size: vk::DeviceSize,
 }

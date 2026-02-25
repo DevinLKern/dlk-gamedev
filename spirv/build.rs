@@ -142,7 +142,7 @@ fn generate_numbers(magic_path: PathBuf, spirv_file_object: &Value) -> Result<()
 fn main() {
     println!("cargo:rerun-if-changed=../external/SPIRV-Headers/include/spirv/unified1/spirv.core.grammar.json");
 
-    let spirv_file_path = PathBuf::from("grammar").join("spirv.core.grammar.json");
+    let spirv_file_path = PathBuf::from("../external/SPIRV-Headers/include/spirv/unified1/spirv.core.grammar.json");
     let spirv_file = File::open(spirv_file_path).unwrap();
     let spirv_file_reader = BufReader::new(spirv_file);
     let spirv_file_object: Value = serde_json::from_reader(spirv_file_reader).unwrap();

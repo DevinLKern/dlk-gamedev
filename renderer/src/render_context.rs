@@ -15,7 +15,7 @@ pub struct RenderContext {
     depth_images: Box<[vulkan::Image]>,
     pipeline: Rc<vulkan::Pipeline>,
     per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-    per_frame_uniform_buffers: Box<[vulkan::BufferView]>,
+    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
     other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
     // keeps image alive as long as render context is alive
     image: Rc<vulkan::Image>,
@@ -32,7 +32,7 @@ impl RenderContext {
         fragment_shader_path: &std::path::Path,
         pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
         per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-        per_frame_uniform_buffers: Box<[vulkan::BufferView]>,
+        per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
         other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
         image: Rc<vulkan::image::Image>,
     ) -> crate::Result<RenderContext> {
@@ -396,20 +396,14 @@ impl Drop for RenderContext {
 
 impl RenderContext {
     pub fn update_current_camera_ubo(&mut self, camera: &crate::CameraUBO) {
-        match &self.per_frame_uniform_buffers[self.index] {
-            vulkan::buffer::BufferView::Uniform {
-                buffer,
-                offset,
-                size,
-            } => unsafe {
-                let dst = buffer.map_memory(*offset, *size).unwrap();
-                let src = [camera.clone()];
+        let bv = &self.per_frame_uniform_buffers[self.index];
+        unsafe {
+            let dst = bv.buffer.map_memory(bv.offset, bv.size).unwrap();
+            let src = [camera.clone()];
 
-                std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut crate::CameraUBO, 1);
+            std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut crate::CameraUBO, 1);
 
-                buffer.unmap();
-            },
-            _ => {}
+            bv.buffer.unmap();
         }
     }
 

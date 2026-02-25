@@ -40,8 +40,8 @@ struct Application {
     active_window: Option<WindowId>,
     windows: HashMap<WindowId, (renderer::RenderContext, Window, Camera)>,
     renderer: renderer::Renderer,
-    vertex_buffer: Rc<vulkan::BufferView>,
-    index_buffer: Rc<vulkan::BufferView>,
+    vertex_buffer: Rc<vulkan::VertexBV>,
+    index_buffer: Rc<vulkan::IndexBV>,
     image: Rc<vulkan::Image>,
     model_transform: math::AffineTransform,
     exiting: bool,
@@ -91,7 +91,7 @@ impl Application {
                 )
             };
 
-            renderer.create_vertex_buffer(data, VERTEX_BUFFER_DATA.len() as u32, 0)?
+            renderer.create_vertex_buffer(data, VERTEX_BUFFER_DATA.len() as u32)?
         };
         let index_buffer = {
             let data = unsafe {

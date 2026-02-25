@@ -182,22 +182,13 @@ impl Renderer {
             per_frame_descriptor_sets.len() as u64,
         )?;
         for bv in per_frame_uniform_buffers.iter() {
-            match bv {
-                vulkan::BufferView::Uniform {
-                    buffer,
-                    offset,
-                    size,
-                } => unsafe {
-                    let dst = buffer.map_memory(*offset, *size)?;
-                    let data = camera;
+            unsafe {
+                let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
+                let data = camera;
 
-                    std::ptr::copy_nonoverlapping(data, dst as *mut crate::CameraUBO, 1);
+                std::ptr::copy_nonoverlapping(data, dst as *mut crate::CameraUBO, 1);
 
-                    buffer.unmap();
-                },
-                _ => {
-                    panic!("This is bad code");
-                }
+                bv.buffer.unmap();
             }
         }
 
@@ -209,21 +200,12 @@ impl Renderer {
             };
             let mut buffer_infos = Vec::new();
             for bv in per_frame_uniform_buffers.iter() {
-                match bv {
-                    vulkan::buffer::BufferView::Uniform {
-                        buffer,
-                        offset,
-                        size,
-                    } => {
-                        let info = vk::DescriptorBufferInfo {
-                            buffer: buffer.handle,
-                            offset: *offset,
-                            range: *size,
-                        };
-                        buffer_infos.push(info);
-                    }
-                    _ => return Err(result::Error::NotAdded),
-                }
+                let info = vk::DescriptorBufferInfo {
+                    buffer: bv.buffer.handle,
+                    offset: bv.offset,
+                    range: bv.size,
+                };
+                buffer_infos.push(info);
             }
 
             let mut descriptor_writes = Vec::new();
@@ -282,8 +264,7 @@ impl Renderer {
         &self,
         data: &[u8],
         vertex_count: u32,
-        first_vertex: u32,
-    ) -> vulkan::Result<Rc<vulkan::BufferView>> {
+    ) -> vulkan::Result<Rc<vulkan::VertexBV>> {
         let buffer = {
             let buffer_create_info = vulkan::BufferCreateInfo {
                 size: data.len() as u64,
@@ -305,12 +286,12 @@ impl Renderer {
             buffer.unmap();
         }
 
-        let view = vulkan::BufferView::Vertex {
+        let view = vulkan::VertexBV {
             buffer,
             vertex_count,
             instance_count: 1,
-            first_vertex,
-            first_instance: 0,
+            first_binding: 0,
+            offset: 0,
         };
 
         Ok(Rc::new(view))
@@ -321,7 +302,7 @@ impl Renderer {
         index_type: vk::IndexType,
         index_count: u32,
         first_index: u32,
-    ) -> result::Result<Rc<vulkan::BufferView>> {
+    ) -> result::Result<Rc<vulkan::IndexBV>> {
         let buffer = {
             let buffer_create_info = vulkan::buffer::BufferCreateInfo {
                 size: data.len() as u64,
@@ -343,11 +324,14 @@ impl Renderer {
             buffer.unmap();
         }
 
-        let view = vulkan::BufferView::Index {
+        let view = vulkan::IndexBV {
             buffer,
+            offset: 0,
             index_count,
             instance_count: 1,
             first_index,
+            vertex_offset: 0,
+            first_instance: 0,
             index_type,
         };
 
@@ -357,7 +341,7 @@ impl Renderer {
         &self,
         size: u64,
         count: u64,
-    ) -> result::Result<Box<[vulkan::BufferView]>> {
+    ) -> result::Result<Box<[vulkan::UniformBV]>> {
         let buffer = {
             let buffer_create_info = vulkan::BufferCreateInfo {
                 size: size * count,
@@ -371,8 +355,8 @@ impl Renderer {
 
         let buffer = Rc::new(buffer);
 
-        let views: Box<[vulkan::BufferView]> = (0..count)
-            .map(|i| vulkan::BufferView::Uniform {
+        let views: Box<[vulkan::UniformBV]> = (0..count)
+            .map(|i| vulkan::UniformBV {
                 buffer: buffer.clone(),
                 offset: i * size,
                 size: size,
@@ -384,21 +368,14 @@ impl Renderer {
     pub fn update_uniform_buffer(
         &self,
         data: &[u8],
-        uniform_buffer: &vulkan::BufferView,
+        uniform_bv: &vulkan::UniformBV,
     ) -> result::Result<()> {
-        match uniform_buffer {
-            vulkan::BufferView::Uniform {
-                buffer,
-                offset,
-                size,
-            } => unsafe {
-                let dst = buffer.map_memory(*offset, *size)?;
+        unsafe {
+            let dst = uniform_bv.buffer.map_memory(uniform_bv.offset, uniform_bv.size)?;
 
-                std::ptr::copy_nonoverlapping(data.as_ptr(), dst as *mut u8, data.len());
+            std::ptr::copy_nonoverlapping(data.as_ptr(), dst as *mut u8, data.len());
 
-                Ok(buffer.unmap())
-            },
-            _ => Err(result::Error::ExpectedUniformBufferView),
+            Ok(uniform_bv.buffer.unmap())
         }
     }
     pub fn create_image(
