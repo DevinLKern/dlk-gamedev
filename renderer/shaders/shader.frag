@@ -1,7 +1,7 @@
 #version 450
 
 
-layout (set = 1, binding = 0) uniform sampler2D tex_sampler;
+layout (set = 2, binding = 1) uniform sampler2D tex_sampler;
 
 // layout (location = 0) in vec3 vColor;
 layout (location = 0) in vec2 v_tex_coord;

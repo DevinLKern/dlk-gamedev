@@ -1,9 +1,6 @@
 use crate::device::SharedDeviceRef;
 use crate::trace_error;
-use crate::{
-    descriptor::DescriptorSetLayout,
-    result::Result,
-};
+use crate::{descriptor::DescriptorSetLayout, result::Result};
 use ash::vk::{self, GraphicsPipelineCreateInfo};
 use spirv;
 use std::collections::HashMap;
@@ -13,7 +10,7 @@ pub struct PipelineLayout {
     // maps name to the set number and information about the set
     device: SharedDeviceRef,
     pub bind_point: vk::PipelineBindPoint,
-    set_layouts: Box<[crate::descriptor::DescriptorSetLayout]>,
+    set_layouts: Box<[crate::DescriptorSetLayout]>,
     pub handle: vk::PipelineLayout,
 }
 
@@ -100,6 +97,16 @@ impl PipelineLayout {
             binding_info.descriptor_count = uniform.descriptor_count;
             binding_info.stage_flags |= vk::ShaderStageFlags::VERTEX;
         }
+
+        {
+            // TODO: The type of descriptor sets cannot be inferred from the shader alone.
+            // Information must be provided. This part of the code should be changed to reflect that. 
+            let entry = descriptor_set_bindings1.entry((1, 0));
+            entry.and_modify(|e| {
+                e.descriptor_type = vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC;
+            });
+        }
+        
         for uniform in frag_descriptor_sets {
             let binding_info = descriptor_set_bindings1
                 .entry((uniform.set, uniform.binding))

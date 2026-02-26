@@ -429,9 +429,7 @@ impl Module {
                         sampled,
                     }
                 }
-                crate::OP_TYPE_SAMPLER => {
-                    TypeInfo::Sampler
-                }
+                crate::OP_TYPE_SAMPLER => TypeInfo::Sampler,
                 crate::OP_TYPE_SAMPLED_IMAGE => {
                     let image_type_id = i.operands[1];
                     TypeInfo::SampledImage {

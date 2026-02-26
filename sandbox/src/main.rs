@@ -18,7 +18,7 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use math::Identity;
+use math::{Identity, Zero};
 use math::Quat;
 use math::Vec3;
 
@@ -66,18 +66,22 @@ impl Application {
                 renderer::ShaderVertVertex {
                     position: TL.into_arr(),
                     tex_coord: [1.0, 0.0],
+                    normal: WORLD_FORWARDS.into_arr()
                 },
                 renderer::ShaderVertVertex {
                     position: TR.into_arr(),
                     tex_coord: [0.0, 0.0],
+                    normal: WORLD_FORWARDS.into_arr()
                 },
                 renderer::ShaderVertVertex {
                     position: BR.into_arr(),
                     tex_coord: [0.0, 1.0],
+                    normal: WORLD_FORWARDS.into_arr()
                 },
                 renderer::ShaderVertVertex {
                     position: BL.into_arr(),
                     tex_coord: [1.0, 1.0],
+                    normal: WORLD_FORWARDS.into_arr()
                 },
             ]
         };
@@ -166,30 +170,60 @@ impl Application {
                 }
 
                 let camera_ubo = renderer::CameraUBO {
-                    model: self.model_transform.as_mat4().into_2d_arr(),
                     view: camera.get_view_matrix().into_2d_arr(),
                     proj: camera.get_projection_matrix().into_2d_arr(),
                     ..Default::default()
                 };
+                let mesh_ubos = [renderer::MeshUBO{
+                    model: self.model_transform.as_mat4().into_2d_arr(),
+                    base_color: math::Vec4::ZERO.into_arr(),
+                    flags: 0,
+                }];
+                let light_ubo = renderer::GlobalLightUBO {
+                    direction: WORLD_UP.scaled(-1.0).into_arr(),
+                    color: [1.0, 1.0, 1.0, 1.0],
+                    ambient: 0.15,
+                    ..Default::default()
+                };
                 let new_context =
                     self.renderer
-                        .create_render_context(&camera_ubo, window, self.image.clone())?;
+                        .create_render_context(
+                            &camera_ubo, &mesh_ubos, &light_ubo, window, self.image.clone())?;
 
                 *context = new_context;
             }
             WindowEvent::RedrawRequested => {
                 // println!("Redraw requested!");
 
-                let camera_ubo = renderer::CameraUBO {
-                    model: self.model_transform.as_mat4().into_2d_arr(),
+                let camera_ubo = [renderer::CameraUBO {
                     view: camera.get_view_matrix().into_2d_arr(),
                     proj: camera.get_projection_matrix().into_2d_arr(),
                     ..Default::default()
-                };
-                context.update_current_camera_ubo(&camera_ubo);
+                }];
+                let camera_ubo_ptr = camera_ubo.as_ptr() as *const u8;
+                let current_buffer = context.get_current_per_frame_buffer();
+                self.renderer.update_uniform_buffer(
+                    camera_ubo_ptr,
+                    std::mem::size_of::<renderer::CameraUBO>(),
+                    current_buffer,
+                )?;
+
+                let current_ds = context.get_current_per_frame_descriptor_set();
+                let obj_ds = context.get_per_obj_descriptor_set();
+                let other_ds = context.get_other_descriptor_set();
+
+                let pipeline = context.get_pipeline();
+
+                let mesh_ubo_dynamic_offset = context.get_per_obj_dynamic_uniform_buffsers()[0].offset as u32;
                 let vertex_buffer = self.vertex_buffer.clone();
                 let index_buffer = self.index_buffer.clone();
                 let record_draw_commands = |command_buffer: vk::CommandBuffer| unsafe {
+                    current_ds.bind(command_buffer, &[]);
+                    obj_ds.bind(command_buffer, &[mesh_ubo_dynamic_offset]);
+                    other_ds.bind(command_buffer, &[]);
+
+                    pipeline.bind(command_buffer);
+
                     vertex_buffer.bind(command_buffer);
                     index_buffer.bind(command_buffer);
                     index_buffer.draw(command_buffer);
@@ -385,23 +419,34 @@ impl ApplicationHandler for Application {
             Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
         };
         let window_id = window.id();
+        
         let camera_ubo = renderer::CameraUBO {
-            model: self.model_transform.as_mat4().into_2d_arr(),
             view: camera.get_view_matrix().into_2d_arr(),
             proj: camera.get_projection_matrix().into_2d_arr(),
             ..Default::default()
         };
+        let mesh_ubos = [renderer::MeshUBO{
+            model: self.model_transform.as_mat4().into_2d_arr(),
+            base_color: math::Vec4::ZERO.into_arr(),
+            flags: 0,
+        }];
+        let light_ubo = renderer::GlobalLightUBO {
+            direction: WORLD_UP.scaled(-1.0).into_arr(),
+            color: [1.0, 1.0, 1.0, 1.0],
+            ambient: 0.15,
+            ..Default::default()
+        };
         let context =
             match self
-                .renderer
-                .create_render_context(&camera_ubo, &window, self.image.clone())
-            {
-                Ok(context) => context,
-                Err(e) => {
-                    trace_error!(e);
-                    return self.exiting(event_loop);
-                }
-            };
+            .renderer
+            .create_render_context(&camera_ubo, &mesh_ubos, &light_ubo, &window, self.image.clone())
+        {
+            Ok(context) => context,
+            Err(e) => {
+                trace_error!(e);
+                return self.exiting(event_loop);
+            }
+        };
         self.windows.insert(window_id, (context, window, camera));
     }
 

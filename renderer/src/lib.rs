@@ -79,6 +79,8 @@ impl Renderer {
     pub fn create_render_context(
         &self,
         camera: &crate::CameraUBO,
+        objects: &[crate::MeshUBO],
+        light: &crate::GlobalLightUBO,
         window: &winit::window::Window,
         image: Rc<vulkan::Image>,
     ) -> result::Result<RenderContext> {
@@ -94,15 +96,17 @@ impl Renderer {
             &frag_spv_module,
         )?);
 
-        let per_frame_descriptor_set = 0;
+        let per_frame_ds_index = 0;
+        let per_obj_ds_index = 1;
+        let other_ds_index = 2;
 
-        let (per_frame_descriptor_sets, other_descriptor_sets) = {
+        let (per_frame_descriptor_sets, per_obj_descriptor_set, other_descriptor_set) = {
             let all_layouts = pipeline_layout.get_set_layouts();
 
             let descriptor_pool = {
                 let mut pool_sizes = std::collections::HashMap::<vk::DescriptorType, u32>::new();
                 for l in all_layouts.iter() {
-                    let count = if l.set == per_frame_descriptor_set {
+                    let count = if l.set == per_frame_ds_index {
                         3
                     } else {
                         1
@@ -137,32 +141,36 @@ impl Renderer {
             };
 
             let per_frame_descriptor_sets = {
-                let layouts: Box<[vk::DescriptorSetLayout]> = (0..3)
-                    .map(|_| {
-                        all_layouts
-                            .iter()
-                            .find(|l| l.set == 0)
-                            .unwrap()
-                            .handle
-                            .clone()
-                    })
-                    .collect();
+                let mut sets = Vec::new();
+                for _ in (0..3).into_iter() {
+                    let s = vulkan::DescriptorSet::allocate(
+                        self.device.clone(),
+                        descriptor_pool.clone(),
+                        per_frame_ds_index,
+                        pipeline_layout.clone(),
+                    )?;
+                    sets.push(s);
+                }
+                sets.into_boxed_slice()
+            };
+            let per_obj_descriptor_set = {
                 vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
-                    &layouts,
+                    per_obj_ds_index,
+                    pipeline_layout.clone(),
                 )?
             };
-            let other_descriptor_sets = {
-                let layouts = Box::new([all_layouts.iter().find(|l| l.set == 1).unwrap().handle]);
+            let other_descriptor_set = {
                 vulkan::DescriptorSet::allocate(
                     self.device.clone(),
                     descriptor_pool.clone(),
-                    layouts.as_ref(),
+                    other_ds_index,
+                    pipeline_layout.clone(),
                 )?
             };
 
-            (per_frame_descriptor_sets, other_descriptor_sets)
+            (per_frame_descriptor_sets, per_obj_descriptor_set, other_descriptor_set)
         };
 
         let per_frame_uniform_buffer_size = {
@@ -175,10 +183,30 @@ impl Renderer {
 
             obj1.next_multiple_of(alignment)
         };
+        let per_obj_uniform_buffer_size = {
+            let obj1 = std::mem::size_of::<crate::MeshUBO>() as u64;
+
+            let alignment = unsafe {
+                let properties = self.device.get_physical_device_properties();
+                properties.limits.min_uniform_buffer_offset_alignment
+            };
+
+            obj1.next_multiple_of(alignment)
+        };
+        let other_uniform_buffer_size = {
+            let obj1 = std::mem::size_of::<crate::GlobalLightUBO>() as u64;
+
+            let alignment = unsafe {
+                let properties = self.device.get_physical_device_properties();
+                properties.limits.min_uniform_buffer_offset_alignment
+            };
+
+            obj1.next_multiple_of(alignment)
+        };
 
         // 3 == maximum number of frames?
-        let per_frame_uniform_buffers = self.create_per_frame_unifrom_buffers(
-            per_frame_uniform_buffer_size, // should get aligned
+        let per_frame_uniform_buffers = self.create_uniform_buffers(
+            per_frame_uniform_buffer_size, 
             per_frame_descriptor_sets.len() as u64,
         )?;
         for bv in per_frame_uniform_buffers.iter() {
@@ -191,25 +219,51 @@ impl Renderer {
                 bv.buffer.unmap();
             }
         }
+        
+        let per_obj_uniform_buffers = self.create_dynamic_uniform_buffers(
+            per_obj_uniform_buffer_size,
+            objects.len() as u64,
+        )?;
+        for (bv, data) in per_obj_uniform_buffers.iter().zip(objects.iter()) {
+            unsafe {
+                let dst = bv.buffer.map_memory(
+                    bv.offset,
+                    bv.size
+                )?;
+
+                std::ptr::copy_nonoverlapping(data, dst as *mut crate::MeshUBO, 1);
+
+                bv.buffer.unmap();
+            }
+        }
+
+        let other_uniform_buffer = self.create_uniform_buffers(
+            other_uniform_buffer_size,
+            1,
+        )?;
+        let other_uniform_buffer = other_uniform_buffer.into_iter().next().unwrap();
+        unsafe {
+            let dst = other_uniform_buffer.buffer.map_memory(other_uniform_buffer.offset, other_uniform_buffer.size)?;
+            let data = light;
+
+            std::ptr::copy_nonoverlapping(data, dst as *mut crate::GlobalLightUBO, 1);
+
+            other_uniform_buffer.buffer.unmap();
+        }
 
         {
-            let image_info = vk::DescriptorImageInfo {
-                sampler: self.sampler,
-                image_view: image.view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: should be stored in the image class?
-            };
-            let mut buffer_infos = Vec::new();
+            let mut per_frame_buffer_infos = Vec::new();
             for bv in per_frame_uniform_buffers.iter() {
                 let info = vk::DescriptorBufferInfo {
                     buffer: bv.buffer.handle,
                     offset: bv.offset,
                     range: bv.size,
                 };
-                buffer_infos.push(info);
+                per_frame_buffer_infos.push(info);
             }
 
             let mut descriptor_writes = Vec::new();
-            for (bi, ds) in buffer_infos.iter().zip(per_frame_descriptor_sets.iter()) {
+            for (bi, ds) in per_frame_buffer_infos.iter().zip(per_frame_descriptor_sets.iter()) {
                 descriptor_writes.push(vk::WriteDescriptorSet {
                     dst_set: ds.handle,
                     dst_binding: 0,
@@ -221,9 +275,49 @@ impl Renderer {
                 });
             }
 
+            let mut per_obj_buffer_infos = Vec::new();
+            for bv in per_obj_uniform_buffers.iter() {
+                let info = vk::DescriptorBufferInfo {
+                    buffer: bv.buffer.handle,
+                    offset: bv.offset,
+                    range: bv.size,
+                };
+                per_obj_buffer_infos.push(info);
+            }
+            for bi in per_obj_buffer_infos.iter() {
+                descriptor_writes.push(vk::WriteDescriptorSet {
+                    dst_set: per_obj_descriptor_set.handle,
+                    dst_binding: 0,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    p_buffer_info: bi,
+                    ..Default::default()
+                });
+            }
+
+            let other_bi = vk::DescriptorBufferInfo {
+                buffer: other_uniform_buffer.buffer.handle,
+                offset: other_uniform_buffer.offset,
+                range: other_uniform_buffer.size,
+            };
+            let image_info = vk::DescriptorImageInfo {
+                sampler: self.sampler,
+                image_view: image.view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: should be stored in the image class?
+            };
             descriptor_writes.push(vk::WriteDescriptorSet {
-                dst_set: other_descriptor_sets[0].handle,
+                dst_set: other_descriptor_set.handle,
                 dst_binding: 0,
+                dst_array_element: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                p_buffer_info: &other_bi,
+                ..Default::default()
+            });
+            descriptor_writes.push(vk::WriteDescriptorSet {
+                dst_set: other_descriptor_set.handle,
+                dst_binding: 1,
                 dst_array_element: 0,
                 descriptor_count: 1,
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
@@ -233,6 +327,10 @@ impl Renderer {
             unsafe { self.device.update_descriptor_sets(&descriptor_writes, &[]) };
         }
 
+        let per_obj_descriptor_set = Rc::new(per_obj_descriptor_set);
+        let other_descriptor_sets = Box::new([other_descriptor_set]);
+        let other_uniform_buffer = Rc::new(other_uniform_buffer);
+
         crate::RenderContext::new(
             self.device.clone(),
             window,
@@ -240,8 +338,11 @@ impl Renderer {
             &frag_shader_path,
             pipeline_layout,
             per_frame_descriptor_sets,
-            per_frame_uniform_buffers,
+            per_obj_descriptor_set,
             other_descriptor_sets,
+            per_frame_uniform_buffers,
+            per_obj_uniform_buffers,
+            other_uniform_buffer,
             image,
         )
     }
@@ -337,7 +438,7 @@ impl Renderer {
 
         Ok(Rc::new(view))
     }
-    pub fn create_per_frame_unifrom_buffers(
+    pub fn create_uniform_buffers(
         &self,
         size: u64,
         count: u64,
@@ -367,16 +468,53 @@ impl Renderer {
     }
     pub fn update_uniform_buffer(
         &self,
-        data: &[u8],
+        data: *const u8,
+        byte_count: usize,
         uniform_bv: &vulkan::UniformBV,
     ) -> result::Result<()> {
         unsafe {
-            let dst = uniform_bv.buffer.map_memory(uniform_bv.offset, uniform_bv.size)?;
+            let dst = uniform_bv
+                .buffer
+                .map_memory(uniform_bv.offset, uniform_bv.size)?;
 
-            std::ptr::copy_nonoverlapping(data.as_ptr(), dst as *mut u8, data.len());
+            std::ptr::copy_nonoverlapping(data, dst as *mut u8, byte_count);
 
             Ok(uniform_bv.buffer.unmap())
         }
+    }
+    pub fn create_dynamic_uniform_buffers(
+        &self,
+        size: u64,
+        count: u64,
+    ) -> Result<Box<[vulkan::DynamicUniformBV]>> {
+        let aligned_size = {
+            let props = unsafe { self.device.get_physical_device_properties() };
+            size.next_multiple_of(props.limits.min_uniform_buffer_offset_alignment)
+        };
+        
+        let buffer = {
+            let create_info = vulkan::BufferCreateInfo {
+                size: aligned_size * count,
+                usage: vk::BufferUsageFlags::UNIFORM_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_SRC,
+                memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT
+            };
+
+            vulkan::Buffer::new(self.device.clone(), &create_info)?
+        };
+
+        let buffer = Rc::new(buffer);
+
+        let views: Box<[vulkan::DynamicUniformBV]> = (0..count)
+            .map(|i| vulkan::DynamicUniformBV {
+                buffer: buffer.clone(),
+                offset: aligned_size * i,
+                size: size
+            })
+            .collect();
+        
+        Ok(views)
     }
     pub fn create_image(
         &self,

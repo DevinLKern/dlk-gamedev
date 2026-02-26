@@ -120,6 +120,8 @@ impl Drop for DescriptorPool {
 pub struct DescriptorSet {
     device: SharedDeviceRef,
     pool: Rc<DescriptorPool>,
+    pipeline_layout: Rc<crate::PipelineLayout>,
+    set_index: u32,
     pub handle: vk::DescriptorSet,
 }
 
@@ -127,8 +129,10 @@ impl DescriptorSet {
     pub fn allocate(
         device: SharedDeviceRef,
         pool: Rc<DescriptorPool>,
-        set_layouts: &[vk::DescriptorSetLayout],
-    ) -> Result<Box<[Self]>> {
+        set_index: u32,
+        pipeline_layout: Rc<crate::PipelineLayout>,
+    ) -> Result<Self> {
+        let set_layouts = [pipeline_layout.get_set_layouts()[set_index as usize].handle];
         let allocate_info = vk::DescriptorSetAllocateInfo {
             descriptor_pool: pool.handle,
             descriptor_set_count: set_layouts.len() as u32,
@@ -138,13 +142,26 @@ impl DescriptorSet {
 
         let descriptor_sets = unsafe { device.allocate_descriptor_sets(&allocate_info) }?;
 
-        Ok(descriptor_sets
-            .into_iter()
-            .map(|set| Self {
-                device: device.clone(),
-                pool: pool.clone(),
-                handle: set,
-            })
-            .collect())
+        Ok(Self {
+            device,
+            pool,
+            pipeline_layout,
+            set_index,
+            handle: descriptor_sets[0],
+        })
+    }
+
+    pub fn bind(&self, command_buffer: vk::CommandBuffer, dynamic_offsets: &[u32]) {
+        let sets = [self.handle];
+        unsafe {
+            self.device.cmd_bind_descriptor_sets(
+                command_buffer,
+                self.pipeline_layout.bind_point,
+                self.pipeline_layout.handle,
+                self.set_index,
+                &sets,
+                dynamic_offsets,
+            );
+        }
     }
 }

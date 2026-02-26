@@ -14,10 +14,12 @@ pub struct RenderContext {
     command_infos: Box<[(vk::CommandPool, vk::CommandBuffer)]>,
     depth_images: Box<[vulkan::Image]>,
     pipeline: Rc<vulkan::Pipeline>,
-    per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
-    other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-    // keeps image alive as long as render context is alive
+    per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
+    per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
+    other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
+    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,    // keeps image alive as long as render context is alive
+    per_obj_dynamic_uniform_buffers: Box<[vulkan::DynamicUniformBV]>,
+    other_uniform_buffer: Rc<vulkan::UniformBV>,
     image: Rc<vulkan::Image>,
     index: usize,
 }
@@ -32,10 +34,22 @@ impl RenderContext {
         fragment_shader_path: &std::path::Path,
         pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
         per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-        per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
+        per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
         other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
+        per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
+        per_obj_dynamic_uniform_buffers: Box<[vulkan::DynamicUniformBV]>,
+        other_uniform_buffer: Rc<vulkan::UniformBV>,
         image: Rc<vulkan::image::Image>,
     ) -> crate::Result<RenderContext> {
+        let per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = per_frame_descriptor_sets
+            .into_iter()
+            .map(|ds| Rc::new(ds))
+            .collect();
+        let other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = other_descriptor_sets
+            .into_iter()
+            .map(|ds| Rc::new(ds))
+            .collect();
+
         let swapchain =
             vulkan::Swapchain::new(device.clone(), window).inspect_err(|e| trace_error!(e))?;
 
@@ -239,6 +253,12 @@ impl RenderContext {
                         format: vk::Format::R32G32_SFLOAT,
                         offset: std::mem::offset_of!(crate::ShaderVertVertex, tex_coord) as u32,
                     },
+                    vk::VertexInputAttributeDescription {
+                        location: 2,
+                        binding: 0,
+                        format: vk::Format::R32G32B32_SFLOAT,
+                        offset: std::mem::offset_of!(crate::ShaderVertVertex, normal) as u32,
+                    },
                 ];
 
                 let vk_binding_descriptions = [vk::VertexInputBindingDescription {
@@ -364,8 +384,11 @@ impl RenderContext {
             depth_images,
             pipeline,
             per_frame_descriptor_sets,
-            per_frame_uniform_buffers,
+            per_obj_descriptor_set,
             other_descriptor_sets,
+            per_frame_uniform_buffers,
+            per_obj_dynamic_uniform_buffers,
+            other_uniform_buffer,
             image,
             index: 0,
         })
@@ -395,18 +418,24 @@ impl Drop for RenderContext {
 }
 
 impl RenderContext {
-    pub fn update_current_camera_ubo(&mut self, camera: &crate::CameraUBO) {
-        let bv = &self.per_frame_uniform_buffers[self.index];
-        unsafe {
-            let dst = bv.buffer.map_memory(bv.offset, bv.size).unwrap();
-            let src = [camera.clone()];
-
-            std::ptr::copy_nonoverlapping(src.as_ptr(), dst as *mut crate::CameraUBO, 1);
-
-            bv.buffer.unmap();
-        }
+    pub fn get_pipeline(&self) -> Rc<vulkan::Pipeline> {
+        self.pipeline.clone()
     }
-
+    pub fn get_current_per_frame_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
+        self.per_frame_descriptor_sets[self.index].clone()
+    }
+    pub fn get_per_obj_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
+        self.per_obj_descriptor_set.clone()
+    }
+    pub fn get_other_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
+        self.other_descriptor_sets[0].clone()
+    }
+    pub fn get_current_per_frame_buffer(&self) -> &vulkan::UniformBV {
+        &self.per_frame_uniform_buffers[self.index]
+    }
+    pub fn get_per_obj_dynamic_uniform_buffsers(&self) -> &[vulkan::DynamicUniformBV] {
+        &self.per_obj_dynamic_uniform_buffers
+    }
     pub unsafe fn draw<F>(&mut self, record_draw_commands: F) -> vulkan::result::Result<()>
     where
         F: FnOnce(vk::CommandBuffer),
@@ -564,19 +593,17 @@ impl RenderContext {
                     .cmd_set_viewport(*command_buffer, 0, &[viewport]);
                 self.device.cmd_set_scissor(*command_buffer, 0, &[scissor]);
 
-                self.pipeline.bind(*command_buffer);
-
-                self.device.cmd_bind_descriptor_sets(
-                    *command_buffer,
-                    self.pipeline.get_layout().bind_point,
-                    self.pipeline.get_layout().handle,
-                    0,
-                    &[
-                        self.per_frame_descriptor_sets[self.index].handle,
-                        self.other_descriptor_sets[0].handle,
-                    ],
-                    &[],
-                );
+                // self.device.cmd_bind_descriptor_sets(
+                //     *command_buffer,
+                //     self.pipeline.get_layout().bind_point,
+                //     self.pipeline.get_layout().handle,
+                //     0,
+                //     &[
+                //         self.per_frame_descriptor_sets[self.index].handle,
+                //         self.other_descriptor_sets[0].handle,
+                //     ],
+                //     &[],
+                // );
             };
         }
 

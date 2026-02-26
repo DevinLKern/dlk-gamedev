@@ -120,7 +120,9 @@ impl VertexBV {
         let buffers = [self.buffer.handle];
         let offsets = [self.offset];
         unsafe {
-            self.buffer.device.cmd_bind_vertex_buffers(cmd, self.first_binding, &buffers, &offsets);
+            self.buffer
+                .device
+                .cmd_bind_vertex_buffers(cmd, self.first_binding, &buffers, &offsets);
         }
     }
 
@@ -143,15 +145,25 @@ pub struct IndexBV {
 impl IndexBV {
     pub unsafe fn bind(&self, cmd: vk::CommandBuffer) {
         unsafe {
-            self.buffer.device
-                .cmd_bind_index_buffer(cmd, self.buffer.handle, self.offset, self.index_type)
+            self.buffer.device.cmd_bind_index_buffer(
+                cmd,
+                self.buffer.handle,
+                self.offset,
+                self.index_type,
+            )
         }
     }
 
     pub unsafe fn draw(&self, cmd: vk::CommandBuffer) {
         unsafe {
-            self.buffer.device
-                .cmd_draw_indexed(cmd, self.index_count, self.instance_count, self.first_index, self.vertex_offset, self.first_instance);
+            self.buffer.device.cmd_draw_indexed(
+                cmd,
+                self.index_count,
+                self.instance_count,
+                self.first_index,
+                self.vertex_offset,
+                self.first_instance,
+            );
         }
     }
 }
