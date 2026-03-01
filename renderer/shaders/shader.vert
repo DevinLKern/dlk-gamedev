@@ -26,11 +26,11 @@ layout(location = 0) in vec3 position;
 layout(location = 1) in vec2 tex_coord;
 layout(location = 2) in vec3 normal;
 
-// layout(location = 1) out vec3 vColor;
 layout(location = 0) out vec2 v_tex_coord;
+layout(location = 1) out vec3 v_normal;
 
 void main() {
-    float a = world_light.ambient;
     gl_Position = camera.proj * camera.view * mesh.model * vec4(position, 1);
     v_tex_coord = tex_coord;
+    v_normal = normal;
 }

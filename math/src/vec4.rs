@@ -46,6 +46,10 @@ where
     pub const fn w(&self) -> T {
         self.0[3]
     }
+    #[inline]
+    pub fn as_arr(&self) -> [T; 4] {
+        self.0
+    }
 }
 
 impl<T> Vec4<T> {

@@ -18,10 +18,10 @@ use winit::{
     window::{Window, WindowId},
 };
 
-use math::{Quat, Zero};
+use math::Identity;
 use math::Vec3;
 use math::Vec4;
-use math::Identity;
+use math::{Quat, Zero};
 
 macro_rules! trace_error {
     ($e:expr) => {
@@ -52,6 +52,8 @@ struct Application {
     plane_transform: math::AffineTransform,
     plane_base_color: Vec4<f32>,
     plane_flags: u32,
+    global_light_direction: Vec3<f32>,
+    global_light_color: Vec4<f32>,
     exiting: bool,
 }
 
@@ -67,7 +69,7 @@ impl Application {
 
         const CUBE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 24] = {
             const U: Vec3<f32> = WORLD_UP;
-            const D: Vec3<f32> = WORLD_UP.scaled(-1.0);
+            const D: Vec3<f32> = Vec3::ZERO.sub(U);
             const R: Vec3<f32> = WORLD_RIGHT;
             const L: Vec3<f32> = WORLD_RIGHT.scaled(-1.0);
             const F: Vec3<f32> = WORLD_FORWARDS;
@@ -215,7 +217,8 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     CUBE_VERTEX_BUFFER_DATA.as_ptr() as *const u8,
-                    CUBE_VERTEX_BUFFER_DATA.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
+                    CUBE_VERTEX_BUFFER_DATA.len()
+                        * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
@@ -275,7 +278,8 @@ impl Application {
             let data = unsafe {
                 std::slice::from_raw_parts(
                     PLANE_VERTEX_BUFFER_DATA.as_ptr() as *const u8,
-                    PLANE_VERTEX_BUFFER_DATA.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
+                    PLANE_VERTEX_BUFFER_DATA.len()
+                        * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
@@ -319,7 +323,7 @@ impl Application {
             image,
             exiting: false,
             model_transform: math::AffineTransform {
-                position: WORLD_FORWARDS.scaled(0.75),
+                position: WORLD_FORWARDS.scaled(2.0),
                 orientation: Quat::IDENTITY,
                 scalar: model_scale,
             },
@@ -327,11 +331,16 @@ impl Application {
             model_flags: 0,
             plane_transform: math::AffineTransform {
                 position: WORLD_UP.scaled(-4.0),
-                orientation: math::Quat::unit_from_angle_axis(-std::f32::consts::FRAC_PI_2, WORLD_RIGHT),
+                orientation: math::Quat::unit_from_angle_axis(
+                    -std::f32::consts::FRAC_PI_2,
+                    WORLD_RIGHT,
+                ),
                 scalar: Vec3::new(20.0, 20.0, 20.0),
             },
-            plane_base_color: Vec4::new(1.0, 0.0, 0.0, 1.0),
-            plane_flags: 1
+            plane_base_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            global_light_direction: Vec3::ZERO.sub(WORLD_UP).add(WORLD_RIGHT.scaled(0.2)),
+            global_light_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            plane_flags: 1,
         })
     }
 }
@@ -369,19 +378,22 @@ impl Application {
                     proj: camera.get_projection_matrix().into_2d_arr(),
                     ..Default::default()
                 };
-                let mesh_ubos = [renderer::MeshUBO {
-                    model: self.plane_transform.as_mat4().into_2d_arr(),
-                    base_color: self.plane_base_color.into_arr(),
-                    flags: self.plane_flags,
-                }, renderer::MeshUBO {
-                    model: self.model_transform.as_mat4().into_2d_arr(),
-                    base_color: self.model_base_color.into_arr(),
-                    flags: self.model_flags,
-                }];
+                let mesh_ubos = [
+                    renderer::MeshUBO {
+                        model: self.plane_transform.as_mat4().into_2d_arr(),
+                        base_color: self.plane_base_color.into_arr(),
+                        flags: self.plane_flags,
+                    },
+                    renderer::MeshUBO {
+                        model: self.model_transform.as_mat4().into_2d_arr(),
+                        base_color: self.model_base_color.into_arr(),
+                        flags: self.model_flags,
+                    },
+                ];
 
                 let light_ubo = renderer::GlobalLightUBO {
-                    direction: WORLD_UP.scaled(-1.0).into_arr(),
-                    color: [1.0, 1.0, 1.0, 1.0],
+                    direction: self.global_light_direction.into_arr(),
+                    color: self.global_light_color.into_arr(),
                     ambient: 0.15,
                     ..Default::default()
                 };
@@ -417,15 +429,24 @@ impl Application {
 
                 let pipeline = context.get_pipeline();
 
-                let plane_dynamic_offset: [u32; 1] = [
-                    context.get_per_obj_dynamic_uniform_buffers()[0].offset as u32,
-                ];
+                let plane_dynamic_offset: [u32; 1] =
+                    [context.get_per_obj_dynamic_uniform_buffers()[0].offset as u32];
                 let plane_vertex_buffer = self.plane_vertex_buffer.clone();
                 let plane_index_buffer = self.plane_index_buffer.clone();
 
-                let model_dynamic_offset: [u32; 1] = [
-                    context.get_per_obj_dynamic_uniform_buffers()[1].offset as u32,
-                ];
+                let model_dynamic_offset: [u32; 1] =
+                    [context.get_per_obj_dynamic_uniform_buffers()[1].offset as u32];
+                let mesh_ubo = [renderer::MeshUBO {
+                    model: self.model_transform.as_mat4().into_2d_arr(),
+                    base_color: self.model_base_color.into_arr(),
+                    flags: self.model_flags,
+                }];
+                let mesh_ubo_ptr = mesh_ubo.as_ptr() as *const u8;
+                self.renderer.update_dynamic_uniform_buffer(
+                    mesh_ubo_ptr,
+                    std::mem::size_of::<renderer::MeshUBO>(),
+                    &context.get_per_obj_dynamic_uniform_buffers()[1],
+                )?;
                 let model_vertex_buffer = self.model_vertex_buffer.clone();
                 let model_index_buffer = self.model_index_buffer.clone();
 
@@ -454,7 +475,7 @@ impl Application {
                 use winit::event::KeyEvent;
                 use winit::keyboard::KeyCode;
 
-                // const ANGLE: f32 = 0.025;
+                const ANGLE: f32 = 0.025;
                 const SPEED: f32 = 0.025;
                 match event {
                     KeyEvent { physical_key, .. } => match physical_key {
@@ -487,18 +508,30 @@ impl Application {
                             KeyCode::ControlLeft => {
                                 camera.move_global(WORLD_UP.scaled(-SPEED));
                             }
-                            // KeyCode::ArrowUp => {
-                            //     *self.model_angle.z_mut() += ANGLE;
-                            // }
-                            // KeyCode::ArrowDown => {
-                            //     *self.model_angle.z_mut() -= ANGLE;
-                            // }
-                            // KeyCode::ArrowLeft => {
-                            //     *self.model_angle.x_mut() += ANGLE;
-                            // }
-                            // KeyCode::ArrowRight => {
-                            //     *self.model_angle.x_mut() -= ANGLE;
-                            // }
+                            KeyCode::ArrowUp => {
+                                self.model_transform.rotate_global(
+                                    Quat::unit_from_angle_axis(ANGLE, WORLD_RIGHT),
+                                    self.model_transform.position,
+                                );
+                            }
+                            KeyCode::ArrowDown => {
+                                self.model_transform.rotate_global(
+                                    Quat::unit_from_angle_axis(-ANGLE, WORLD_RIGHT),
+                                    self.model_transform.position,
+                                );
+                            }
+                            KeyCode::ArrowLeft => {
+                                self.model_transform.rotate_global(
+                                    Quat::unit_from_angle_axis(-ANGLE, WORLD_UP),
+                                    self.model_transform.position,
+                                );
+                            }
+                            KeyCode::ArrowRight => {
+                                self.model_transform.rotate_global(
+                                    Quat::unit_from_angle_axis(ANGLE, WORLD_UP),
+                                    self.model_transform.position,
+                                );
+                            }
                             _ => {}
                         },
                         _ => {}
@@ -642,19 +675,22 @@ impl ApplicationHandler for Application {
             proj: camera.get_projection_matrix().into_2d_arr(),
             ..Default::default()
         };
-        let mesh_ubos = [renderer::MeshUBO {
-            model: self.plane_transform.as_mat4().into_2d_arr(),
-            base_color: self.plane_base_color.into_arr(),
-            flags: self.plane_flags,
-        }, renderer::MeshUBO {
-            model: self.model_transform.as_mat4().into_2d_arr(),
-            base_color: self.model_base_color.into_arr(),
-            flags: self.model_flags,
-        }];
+        let mesh_ubos = [
+            renderer::MeshUBO {
+                model: self.plane_transform.as_mat4().into_2d_arr(),
+                base_color: self.plane_base_color.into_arr(),
+                flags: self.plane_flags,
+            },
+            renderer::MeshUBO {
+                model: self.model_transform.as_mat4().into_2d_arr(),
+                base_color: self.model_base_color.into_arr(),
+                flags: self.model_flags,
+            },
+        ];
         let light_ubo = renderer::GlobalLightUBO {
-            direction: WORLD_UP.scaled(-1.0).into_arr(),
-            color: [1.0, 1.0, 1.0, 1.0],
-            ambient: 0.15,
+            direction: self.global_light_direction.into_arr(),
+            color: self.global_light_color.into_arr(),
+            ambient: 0.05,
             ..Default::default()
         };
         let context = match self.renderer.create_render_context(

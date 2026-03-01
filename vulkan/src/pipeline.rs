@@ -117,7 +117,7 @@ impl PipelineLayout {
                 e.descriptor_type = vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC;
             });
         }
-        
+
         let mut descriptor_set_bindings2 =
             HashMap::<u32, Vec<vk::DescriptorSetLayoutBinding>>::new();
         for ((set, _), uniform) in descriptor_set_bindings1.into_iter() {

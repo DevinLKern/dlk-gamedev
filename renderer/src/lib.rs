@@ -512,6 +512,22 @@ impl Renderer {
 
         Ok(views)
     }
+    pub fn update_dynamic_uniform_buffer(
+        &self,
+        data: *const u8,
+        byte_count: usize,
+        uniform_bv: &vulkan::DynamicUniformBV,
+    ) -> result::Result<()> {
+        unsafe {
+            let dst = uniform_bv
+                .buffer
+                .map_memory(uniform_bv.offset, uniform_bv.size)?;
+
+            std::ptr::copy_nonoverlapping(data, dst as *mut u8, byte_count);
+
+            Ok(uniform_bv.buffer.unmap())
+        }
+    }
     pub fn create_image(
         &self,
         image_data: image::DynamicImage,
