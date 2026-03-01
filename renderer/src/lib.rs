@@ -106,11 +106,7 @@ impl Renderer {
             let descriptor_pool = {
                 let mut pool_sizes = std::collections::HashMap::<vk::DescriptorType, u32>::new();
                 for l in all_layouts.iter() {
-                    let count = if l.set == per_frame_ds_index {
-                        3
-                    } else {
-                        1
-                    };
+                    let count = if l.set == per_frame_ds_index { 3 } else { 1 };
                     for b in l.bindings.iter() {
                         if let Some(c) = pool_sizes.get_mut(&b.descriptor_type) {
                             *c += count * b.descriptor_count;
@@ -170,7 +166,11 @@ impl Renderer {
                 )?
             };
 
-            (per_frame_descriptor_sets, per_obj_descriptor_set, other_descriptor_set)
+            (
+                per_frame_descriptor_sets,
+                per_obj_descriptor_set,
+                other_descriptor_set,
+            )
         };
 
         let per_frame_uniform_buffer_size = {
@@ -206,7 +206,7 @@ impl Renderer {
 
         // 3 == maximum number of frames?
         let per_frame_uniform_buffers = self.create_uniform_buffers(
-            per_frame_uniform_buffer_size, 
+            per_frame_uniform_buffer_size,
             per_frame_descriptor_sets.len() as u64,
         )?;
         for bv in per_frame_uniform_buffers.iter() {
@@ -219,17 +219,12 @@ impl Renderer {
                 bv.buffer.unmap();
             }
         }
-        
-        let per_obj_uniform_buffers = self.create_dynamic_uniform_buffers(
-            per_obj_uniform_buffer_size,
-            objects.len() as u64,
-        )?;
+
+        let per_obj_uniform_buffers =
+            self.create_dynamic_uniform_buffers(per_obj_uniform_buffer_size, objects.len() as u64)?;
         for (bv, data) in per_obj_uniform_buffers.iter().zip(objects.iter()) {
             unsafe {
-                let dst = bv.buffer.map_memory(
-                    bv.offset,
-                    bv.size
-                )?;
+                let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
 
                 std::ptr::copy_nonoverlapping(data, dst as *mut crate::MeshUBO, 1);
 
@@ -237,13 +232,12 @@ impl Renderer {
             }
         }
 
-        let other_uniform_buffer = self.create_uniform_buffers(
-            other_uniform_buffer_size,
-            1,
-        )?;
+        let other_uniform_buffer = self.create_uniform_buffers(other_uniform_buffer_size, 1)?;
         let other_uniform_buffer = other_uniform_buffer.into_iter().next().unwrap();
         unsafe {
-            let dst = other_uniform_buffer.buffer.map_memory(other_uniform_buffer.offset, other_uniform_buffer.size)?;
+            let dst = other_uniform_buffer
+                .buffer
+                .map_memory(other_uniform_buffer.offset, other_uniform_buffer.size)?;
             let data = light;
 
             std::ptr::copy_nonoverlapping(data, dst as *mut crate::GlobalLightUBO, 1);
@@ -263,7 +257,10 @@ impl Renderer {
             }
 
             let mut descriptor_writes = Vec::new();
-            for (bi, ds) in per_frame_buffer_infos.iter().zip(per_frame_descriptor_sets.iter()) {
+            for (bi, ds) in per_frame_buffer_infos
+                .iter()
+                .zip(per_frame_descriptor_sets.iter())
+            {
                 descriptor_writes.push(vk::WriteDescriptorSet {
                     dst_set: ds.handle,
                     dst_binding: 0,
@@ -279,7 +276,7 @@ impl Renderer {
             for bv in per_obj_uniform_buffers.iter() {
                 let info = vk::DescriptorBufferInfo {
                     buffer: bv.buffer.handle,
-                    offset: bv.offset,
+                    offset: 0,
                     range: bv.size,
                 };
                 per_obj_buffer_infos.push(info);
@@ -491,14 +488,13 @@ impl Renderer {
             let props = unsafe { self.device.get_physical_device_properties() };
             size.next_multiple_of(props.limits.min_uniform_buffer_offset_alignment)
         };
-        
+
         let buffer = {
             let create_info = vulkan::BufferCreateInfo {
                 size: aligned_size * count,
-                usage: vk::BufferUsageFlags::UNIFORM_BUFFER
-                    | vk::BufferUsageFlags::TRANSFER_SRC,
+                usage: vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                 memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
-                    | vk::MemoryPropertyFlags::HOST_COHERENT
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
             };
 
             vulkan::Buffer::new(self.device.clone(), &create_info)?
@@ -510,10 +506,10 @@ impl Renderer {
             .map(|i| vulkan::DynamicUniformBV {
                 buffer: buffer.clone(),
                 offset: aligned_size * i,
-                size: size
+                size: size,
             })
             .collect();
-        
+
         Ok(views)
     }
     pub fn create_image(

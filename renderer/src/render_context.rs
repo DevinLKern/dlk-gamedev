@@ -17,7 +17,7 @@ pub struct RenderContext {
     per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
     per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
     other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
-    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,    // keeps image alive as long as render context is alive
+    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>, // keeps image alive as long as render context is alive
     per_obj_dynamic_uniform_buffers: Box<[vulkan::DynamicUniformBV]>,
     other_uniform_buffer: Rc<vulkan::UniformBV>,
     image: Rc<vulkan::Image>,
@@ -433,7 +433,7 @@ impl RenderContext {
     pub fn get_current_per_frame_buffer(&self) -> &vulkan::UniformBV {
         &self.per_frame_uniform_buffers[self.index]
     }
-    pub fn get_per_obj_dynamic_uniform_buffsers(&self) -> &[vulkan::DynamicUniformBV] {
+    pub fn get_per_obj_dynamic_uniform_buffers(&self) -> &[vulkan::DynamicUniformBV] {
         &self.per_obj_dynamic_uniform_buffers
     }
     pub unsafe fn draw<F>(&mut self, record_draw_commands: F) -> vulkan::result::Result<()>

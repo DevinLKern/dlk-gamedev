@@ -52,6 +52,6 @@ impl AffineTransform {
         let r = self.get_rotation_matrix();
         let s = self.get_scaling_matrix();
 
-        r.mul(&t).mul(&s)
+        t.mul(&r).mul(&s)
     }
 }

@@ -98,15 +98,6 @@ impl PipelineLayout {
             binding_info.stage_flags |= vk::ShaderStageFlags::VERTEX;
         }
 
-        {
-            // TODO: The type of descriptor sets cannot be inferred from the shader alone.
-            // Information must be provided. This part of the code should be changed to reflect that. 
-            let entry = descriptor_set_bindings1.entry((1, 0));
-            entry.and_modify(|e| {
-                e.descriptor_type = vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC;
-            });
-        }
-        
         for uniform in frag_descriptor_sets {
             let binding_info = descriptor_set_bindings1
                 .entry((uniform.set, uniform.binding))
@@ -118,6 +109,15 @@ impl PipelineLayout {
             binding_info.stage_flags |= vk::ShaderStageFlags::FRAGMENT;
         }
 
+        {
+            // TODO: The type of descriptor sets cannot be inferred from the shader alone.
+            // Information must be provided. This part of the code should be changed to reflect that.
+            let entry = descriptor_set_bindings1.entry((1, 0));
+            entry.and_modify(|e| {
+                e.descriptor_type = vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC;
+            });
+        }
+        
         let mut descriptor_set_bindings2 =
             HashMap::<u32, Vec<vk::DescriptorSetLayoutBinding>>::new();
         for ((set, _), uniform) in descriptor_set_bindings1.into_iter() {

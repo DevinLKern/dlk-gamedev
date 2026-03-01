@@ -22,10 +22,10 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(device: SharedDeviceRef, create_info: &BufferCreateInfo) -> Result<Self> {
-        let buffer_create_info = ash::vk::BufferCreateInfo {
+        let buffer_create_info = vk::BufferCreateInfo {
             size: create_info.size,
             usage: create_info.usage,
-            sharing_mode: ash::vk::SharingMode::EXCLUSIVE,
+            sharing_mode: vk::SharingMode::EXCLUSIVE,
             ..Default::default()
         };
 
@@ -49,7 +49,7 @@ impl Buffer {
             }
         })?;
 
-        let allocate_info = ash::vk::MemoryAllocateInfo {
+        let allocate_info = vk::MemoryAllocateInfo {
             allocation_size: memory_requirements.size,
             memory_type_index,
             ..Default::default()
@@ -104,6 +104,12 @@ impl Drop for Buffer {
             self.device.free_memory(self.memory);
             self.device.destroy_buffer(self.handle);
         }
+    }
+}
+
+impl std::fmt::Display for Buffer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Buffer{{ size: {}, offset: {} }}", self.size, self.offset)
     }
 }
 
@@ -178,4 +184,10 @@ pub struct DynamicUniformBV {
     pub buffer: Rc<Buffer>,
     pub offset: vk::DeviceSize,
     pub size: vk::DeviceSize,
+}
+
+impl std::fmt::Display for DynamicUniformBV {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DynamicUniformBV{{ buffer: {}, size: {}, offset: {} }}", self.buffer, self.size, self.offset)
+    }
 }
