@@ -1,4 +1,4 @@
-use math::{Mat4, Quat, RigidTransform, Vec3, Vec4};
+use math::{Mat4, Quat, RigidTransform, Vec3, Vec4, Zero};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
 
@@ -58,6 +58,20 @@ impl Camera {
 
         self.transform.rotate_global(q_yaw, self.transform.position);
         self.transform.rotate_local(q_pitch);
+    }
+    pub fn look_at(&mut self, target: Vec3<f32>) {
+        // TODO: Double check math here
+        const LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.001;
+
+        let dir = target.sub(self.transform.position).normalized();
+        let yaw_angle = dir.x().atan2(dir.z());
+        let pitch_angle = dir.y().asin().clamp(-LIMIT, LIMIT);
+
+        let yaw = math::Quat::unit_from_angle_axis(yaw_angle, WORLD_UP);
+        self.transform.rotate_global(yaw, self.transform.position);
+
+        let pitch = math::Quat::unit_from_angle_axis(pitch_angle, WORLD_RIGHT);
+        self.transform.rotate_local(pitch);
     }
     #[inline]
     pub const fn move_global(&mut self, offset: Vec3<f32>) {

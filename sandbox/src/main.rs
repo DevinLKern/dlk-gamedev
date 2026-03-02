@@ -44,7 +44,7 @@ struct Application {
     renderer: renderer::Renderer,
     plane_vertex_buffer: Rc<vulkan::VertexBV>,
     plane_index_buffer: Rc<vulkan::IndexBV>,
-    model_vertex_buffer: Rc<vulkan::VertexBV>,
+    model_vertex_buffers: Rc<[vulkan::VertexBV]>,
     // model_index_buffer: Rc<vulkan::IndexBV>,
     image: Rc<vulkan::Image>,
     model_transform: math::AffineTransform,
@@ -70,52 +70,61 @@ impl Application {
         let device = vulkan::Device::new(instance)?;
         let renderer = renderer::Renderer::new(device)?;
 
-        let (model_vertex_buffer, model_transform) = {
+        let (model_vertex_buffers, model_transform) = {
             let file_contents = std::fs::read_to_string(model_path)?;
-            let obj = wavefront_obj::obj::parse(file_contents)?;
-            let obj = obj.objects.first().expect(".obj file does not have any models");
+            let scene = wavefront_obj::obj::parse(file_contents)?;
 
-            let mut vertices = Vec::<ShaderVertVertex>::new();
+            let mut vertices = Vec::<Vec<ShaderVertVertex>>::new();
 
-            for geo in obj.geometry.iter() {
-                for shape in geo.shapes.iter() {
-                    if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive {
-                        for v in [v1, v2, v3] {
-                            let position = [
-                                obj.vertices[v.0].x as f32,
-                                obj.vertices[v.0].y as f32,
-                                obj.vertices[v.0].z as f32
-                            ];
-                            let tex_coord = if let Some(i) = v.1 {
-                                [
-                                    obj.tex_vertices[i].u as f32,
-                                    obj.tex_vertices[i].v as f32
-                                ]
-                            } else {
-                                [0.0, 0.0]
-                            };
-                            let normal = if let Some(i) = v.2 {
-                                [
-                                    obj.normals[i].x as f32,
-                                    obj.normals[i].y as f32,
-                                    obj.normals[i].z as f32
-                                ]
-                            } else {
-                                [0.0, 0.0, 0.0]
-                            };
+            for obj in scene.objects.into_iter() {
+                let mut verts = Vec::<ShaderVertVertex>::new();
 
-                            vertices.push(ShaderVertVertex { position, tex_coord, normal });
+                for geo in obj.geometry.iter() {
+                    for shape in geo.shapes.iter() {
+                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
+                        {
+                            for v in [v1, v2, v3] {
+                                let position = [
+                                    obj.vertices[v.0].x as f32,
+                                    obj.vertices[v.0].y as f32,
+                                    obj.vertices[v.0].z as f32,
+                                ];
+                                let tex_coord = if let Some(i) = v.1 {
+                                    [obj.tex_vertices[i].u as f32, obj.tex_vertices[i].v as f32]
+                                } else {
+                                    [0.0, 0.0]
+                                };
+                                let normal = if let Some(i) = v.2 {
+                                    [
+                                        obj.normals[i].x as f32,
+                                        obj.normals[i].y as f32,
+                                        obj.normals[i].z as f32,
+                                    ]
+                                } else {
+                                    [0.0, 0.0, 0.0]
+                                };
+
+                                verts.push(ShaderVertVertex {
+                                    position,
+                                    tex_coord,
+                                    normal,
+                                });
+                            }
                         }
                     }
                 }
+
+                vertices.push(verts);
             }
 
             let mut min = [f32::MAX; 3];
             let mut max = [f32::MIN; 3];
-            for v in vertices.iter() {
-                for i in 0..3 {
-                    min[i] = min[i].min(v.position[i]);
-                    max[i] = max[i].max(v.position[i]);
+            for verts in vertices.iter() {
+                for v in verts.iter() {
+                    for i in 0..3 {
+                        min[i] = min[i].min(v.position[i]);
+                        max[i] = max[i].max(v.position[i]);
+                    }
                 }
             }
             let center = Vec3::new(
@@ -132,20 +141,26 @@ impl Application {
                 orientation: Quat::IDENTITY,
                 scalar: Vec3::new(model_scale, model_scale, model_scale),
             };
-            
-            let data = unsafe {
-                std::slice::from_raw_parts(
-                    vertices.as_ptr() as *const u8,
-                    vertices.len()
-                        * std::mem::size_of::<renderer::ShaderVertVertex>(),
-                )
-            };
 
-            let vb = renderer.create_vertex_buffer(data, vertices.len() as u32)?;
+            let mut vertex_buffers = Vec::<vulkan::VertexBV>::new();
 
-            (vb, model_transform)
+            for verts in vertices.iter() {
+                let data = unsafe {
+                    std::slice::from_raw_parts(
+                        verts.as_ptr() as *const u8,
+                        verts.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
+                    )
+                };
+
+                let vb = renderer.create_vertex_buffer(data, verts.len() as u32)?;
+                vertex_buffers.push(vb);
+            }
+
+            let vertex_buffers: Rc<[vulkan::VertexBV]> = vertex_buffers.into();
+
+            (vertex_buffers, model_transform)
         };
-        
+
         const PLANE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 4] = {
             const T: Vec3<f32> = WORLD_UP;
             const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_UP);
@@ -190,7 +205,9 @@ impl Application {
                 )
             };
 
-            renderer.create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)?
+            let vb = renderer.create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)?;
+
+            Rc::new(vb)
         };
         let plane_index_buffer = {
             let data = unsafe {
@@ -214,7 +231,7 @@ impl Application {
             // let scale = Vec3::new(image.width as f32, image.height as f32, 0.0).normalized();
 
             image
-        }; 
+        };
 
         Ok(Self {
             mouse_sensitivity: 0.001,
@@ -224,7 +241,7 @@ impl Application {
             windows: std::collections::HashMap::new(),
             plane_vertex_buffer,
             plane_index_buffer,
-            model_vertex_buffer,
+            model_vertex_buffers,
             // model_index_buffer,
             exiting: false,
             image,
@@ -350,7 +367,7 @@ impl Application {
                     std::mem::size_of::<renderer::MeshUBO>(),
                     &context.get_per_obj_dynamic_uniform_buffers()[1],
                 )?;
-                let model_vertex_buffer = self.model_vertex_buffer.clone();
+                let model_vertex_buffers = self.model_vertex_buffers.clone();
                 // let model_index_buffer = self.model_index_buffer.clone();
 
                 let record_draw_commands = |command_buffer: vk::CommandBuffer| unsafe {
@@ -365,10 +382,10 @@ impl Application {
                     plane_index_buffer.draw(command_buffer);
 
                     obj_ds.bind(command_buffer, &model_dynamic_offset);
-                    model_vertex_buffer.bind(command_buffer);
-                    model_vertex_buffer.draw(command_buffer);
-                    // model_index_buffer.bind(command_buffer);
-                    // model_index_buffer.draw(command_buffer);
+                    for bv in model_vertex_buffers.iter() {
+                        bv.bind(command_buffer);
+                        bv.draw(command_buffer);
+                    }
                 };
                 unsafe {
                     context.draw(record_draw_commands)?;
@@ -444,7 +461,7 @@ impl Application {
                 // println!("Keyboard Input!");
             }
             WindowEvent::Moved(_) => {
-                println!("Moved!");
+                // println!("Moved!");
             }
             WindowEvent::Focused(b) => {
                 if b {
@@ -479,13 +496,13 @@ impl Application {
                 println!("Activation Token Done");
             }
             WindowEvent::CursorLeft { .. } => {
-                println!("CursorLeft!");
+                // println!("CursorLeft!");
             }
             WindowEvent::MouseWheel { .. } => {
-                println!("MouseWheel!");
+                // println!("MouseWheel!");
             }
             WindowEvent::Occluded(_) => {
-                println!("Occluded!");
+                // println!("Occluded!");
             }
             WindowEvent::DroppedFile(_) => {
                 println!("Dropped file!");
@@ -494,11 +511,10 @@ impl Application {
                 println!("HoveredFile");
             }
             WindowEvent::Ime(_) => {
-                println!("Ime!");
+                // println!("Ime!");
             }
             WindowEvent::CursorEntered { .. } => {
-                println!("CursorEntered");
-                // window.set_cursor_visible(false);
+                // println!("CursorEntered");
             }
             WindowEvent::Destroyed { .. } => {
                 println!("Destroyed!");
@@ -507,7 +523,7 @@ impl Application {
                 println!("HoveredFileCancelled");
             }
             WindowEvent::ModifiersChanged(_) => {
-                println!("ModifiersChanged");
+                // println!("ModifiersChanged");
             }
             WindowEvent::TouchpadPressure { .. } => {
                 println!("TouchpadPressure");
@@ -565,13 +581,22 @@ impl ApplicationHandler for Application {
                 return self.exiting(event_loop);
             }
         };
-        let camera = {
+        let mut camera = {
             let s = window.inner_size();
             let (w, h) = (s.width as f32, s.height as f32);
             let aspect_ratio = w / h;
 
-            Camera::new(80.0, aspect_ratio, Vec3::new(0.0, 0.0, 0.0), 0.0, 0.0)
+            Camera::new(
+                80.0,
+                aspect_ratio,
+                self.model_transform
+                    .position
+                    .add(Vec3::ZERO.sub(WORLD_FORWARDS).add(WORLD_UP.scaled(0.5))),
+                0.0,
+                0.0,
+            )
         };
+        camera.look_at(self.model_transform.position);
         let window_id = window.id();
 
         let camera_ubo = renderer::CameraUBO {
@@ -635,7 +660,7 @@ impl ApplicationHandler for Application {
         };
         match event {
             DeviceEvent::MouseMotion { delta } => {
-                let dx = -delta.0 * self.mouse_sensitivity;
+                let dx = delta.0 * self.mouse_sensitivity;
                 let dy = -delta.1 * self.mouse_sensitivity;
 
                 camera.rotate(dx as f32, dy as f32);
@@ -690,7 +715,12 @@ fn main() -> Result<()> {
     let mut app = {
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(img_path.as_path(), model_path.as_path(), true, &display_handle)?
+        Application::new(
+            img_path.as_path(),
+            model_path.as_path(),
+            true,
+            &display_handle,
+        )?
     };
 
     event_loop.run_app(&mut app)?;

@@ -362,7 +362,7 @@ impl Renderer {
         &self,
         data: &[u8],
         vertex_count: u32,
-    ) -> vulkan::Result<Rc<vulkan::VertexBV>> {
+    ) -> vulkan::Result<vulkan::VertexBV> {
         let buffer = {
             let buffer_create_info = vulkan::BufferCreateInfo {
                 size: data.len() as u64,
@@ -392,7 +392,7 @@ impl Renderer {
             offset: 0,
         };
 
-        Ok(Rc::new(view))
+        Ok(view)
     }
     pub fn create_index_buffer(
         &self,
