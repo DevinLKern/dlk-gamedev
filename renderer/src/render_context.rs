@@ -39,7 +39,7 @@ impl RenderContext {
         per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
         per_obj_dynamic_uniform_buffers: Box<[vulkan::DynamicUniformBV]>,
         other_uniform_buffer: Rc<vulkan::UniformBV>,
-        image: Rc<vulkan::image::Image>,
+        image: Rc<vulkan::Image>,
     ) -> crate::Result<RenderContext> {
         let per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = per_frame_descriptor_sets
             .into_iter()

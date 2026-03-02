@@ -10,3 +10,4 @@ vulkan = { path = "../vulkan" }
 renderer = { path = "../renderer" }
 math = { path = "../math" }
 image = "=0.25.9"
+wavefront_obj = "11.0.0"

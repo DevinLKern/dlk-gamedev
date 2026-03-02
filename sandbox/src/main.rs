@@ -4,6 +4,7 @@ mod result;
 
 use camera::Camera;
 use constants::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
+use renderer::ShaderVertVertex;
 use result::{Error, Result};
 
 use ash::vk;
@@ -44,7 +45,7 @@ struct Application {
     plane_vertex_buffer: Rc<vulkan::VertexBV>,
     plane_index_buffer: Rc<vulkan::IndexBV>,
     model_vertex_buffer: Rc<vulkan::VertexBV>,
-    model_index_buffer: Rc<vulkan::IndexBV>,
+    // model_index_buffer: Rc<vulkan::IndexBV>,
     image: Rc<vulkan::Image>,
     model_transform: math::AffineTransform,
     model_base_color: Vec4<f32>,
@@ -54,12 +55,14 @@ struct Application {
     plane_flags: u32,
     global_light_direction: Vec3<f32>,
     global_light_color: Vec4<f32>,
+    global_ambient_light: f32,
     exiting: bool,
 }
 
 impl Application {
     fn new(
         img_path: &std::path::Path,
+        model_path: &std::path::Path,
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
@@ -67,178 +70,82 @@ impl Application {
         let device = vulkan::Device::new(instance)?;
         let renderer = renderer::Renderer::new(device)?;
 
-        const CUBE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 24] = {
-            const U: Vec3<f32> = WORLD_UP;
-            const D: Vec3<f32> = Vec3::ZERO.sub(U);
-            const R: Vec3<f32> = WORLD_RIGHT;
-            const L: Vec3<f32> = WORLD_RIGHT.scaled(-1.0);
-            const F: Vec3<f32> = WORLD_FORWARDS;
-            const B: Vec3<f32> = WORLD_FORWARDS.scaled(-1.0);
+        let (model_vertex_buffer, model_transform) = {
+            let file_contents = std::fs::read_to_string(model_path)?;
+            let obj = wavefront_obj::obj::parse(file_contents)?;
+            let obj = obj.objects.first().expect(".obj file does not have any models");
 
-            [
-                // FRONT
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: F.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: F.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: F.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: F.into_arr(),
-                },
-                // BACK
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: B.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: B.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: B.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: B.into_arr(),
-                },
-                // LEFT
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: L.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: L.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: L.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: L.into_arr(),
-                },
-                // RIGHT
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: R.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: R.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: R.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: R.into_arr(),
-                },
-                // TOP
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: U.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: U.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: U.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: U.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: U.into_arr(),
-                },
-                // BOTTOM
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: D.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(F).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: D.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(R).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: D.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: D.add(L).add(B).into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: D.into_arr(),
-                },
-            ]
-        };
+            let mut vertices = Vec::<ShaderVertVertex>::new();
 
-        const CUBE_INDEX_BUFFER_DATA: [u32; 36] = [
-            0, 1, 2, 2, 3, 0, // Front
-            4, 5, 6, 6, 7, 4, // Back
-            8, 9, 10, 10, 11, 8, // Left
-            12, 13, 14, 14, 15, 12, // Right
-            16, 17, 18, 18, 19, 16, // Top
-            20, 21, 22, 22, 23, 20, // Bottom
-        ];
-        let model_vertex_buffer = {
+            for geo in obj.geometry.iter() {
+                for shape in geo.shapes.iter() {
+                    if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive {
+                        for v in [v1, v2, v3] {
+                            let position = [
+                                obj.vertices[v.0].x as f32,
+                                obj.vertices[v.0].y as f32,
+                                obj.vertices[v.0].z as f32
+                            ];
+                            let tex_coord = if let Some(i) = v.1 {
+                                [
+                                    obj.tex_vertices[i].u as f32,
+                                    obj.tex_vertices[i].v as f32
+                                ]
+                            } else {
+                                [0.0, 0.0]
+                            };
+                            let normal = if let Some(i) = v.2 {
+                                [
+                                    obj.normals[i].x as f32,
+                                    obj.normals[i].y as f32,
+                                    obj.normals[i].z as f32
+                                ]
+                            } else {
+                                [0.0, 0.0, 0.0]
+                            };
+
+                            vertices.push(ShaderVertVertex { position, tex_coord, normal });
+                        }
+                    }
+                }
+            }
+
+            let mut min = [f32::MAX; 3];
+            let mut max = [f32::MIN; 3];
+            for v in vertices.iter() {
+                for i in 0..3 {
+                    min[i] = min[i].min(v.position[i]);
+                    max[i] = max[i].max(v.position[i]);
+                }
+            }
+            let center = Vec3::new(
+                (min[0] + max[0]) * 0.5,
+                (min[1] + max[1]) * 0.5,
+                (min[2] + max[2]) * 0.5,
+            );
+
+            let model_scale = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
+            let model_scale = 1.0 / model_scale;
+
+            let model_transform = math::AffineTransform {
+                position: Vec3::ZERO.sub(center).add(WORLD_FORWARDS.scaled(1.5)),
+                orientation: Quat::IDENTITY,
+                scalar: Vec3::new(model_scale, model_scale, model_scale),
+            };
+            
             let data = unsafe {
                 std::slice::from_raw_parts(
-                    CUBE_VERTEX_BUFFER_DATA.as_ptr() as *const u8,
-                    CUBE_VERTEX_BUFFER_DATA.len()
+                    vertices.as_ptr() as *const u8,
+                    vertices.len()
                         * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
-            renderer.create_vertex_buffer(data, CUBE_VERTEX_BUFFER_DATA.len() as u32)?
-        };
-        let model_index_buffer = {
-            let data = unsafe {
-                std::slice::from_raw_parts(
-                    CUBE_INDEX_BUFFER_DATA.as_ptr() as *const u8,
-                    CUBE_INDEX_BUFFER_DATA.len() * std::mem::size_of::<u32>(),
-                )
-            };
+            let vb = renderer.create_vertex_buffer(data, vertices.len() as u32)?;
 
-            renderer.create_index_buffer(
-                data,
-                vk::IndexType::UINT32,
-                CUBE_INDEX_BUFFER_DATA.len() as u32,
-                0,
-            )?
+            (vb, model_transform)
         };
+        
         const PLANE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 4] = {
             const T: Vec3<f32> = WORLD_UP;
             const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_UP);
@@ -300,15 +207,14 @@ impl Application {
                 0,
             )?
         };
-
-        let (image, model_scale) = {
+        let image = {
             let image_data = image::open(img_path)?;
 
             let image = renderer.create_image(image_data)?;
             // let scale = Vec3::new(image.width as f32, image.height as f32, 0.0).normalized();
 
-            (image, Vec3::new(1.0, 1.0, 1.0))
-        };
+            image
+        }; 
 
         Ok(Self {
             mouse_sensitivity: 0.001,
@@ -319,14 +225,10 @@ impl Application {
             plane_vertex_buffer,
             plane_index_buffer,
             model_vertex_buffer,
-            model_index_buffer,
-            image,
+            // model_index_buffer,
             exiting: false,
-            model_transform: math::AffineTransform {
-                position: WORLD_FORWARDS.scaled(2.0),
-                orientation: Quat::IDENTITY,
-                scalar: model_scale,
-            },
+            image,
+            model_transform,
             model_base_color: Vec4::new(1.0, 0.1, 0.4, 1.0),
             model_flags: 0,
             plane_transform: math::AffineTransform {
@@ -340,6 +242,7 @@ impl Application {
             plane_base_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             global_light_direction: Vec3::ZERO.sub(WORLD_UP).add(WORLD_RIGHT.scaled(0.2)),
             global_light_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
+            global_ambient_light: 0.1,
             plane_flags: 1,
         })
     }
@@ -394,7 +297,7 @@ impl Application {
                 let light_ubo = renderer::GlobalLightUBO {
                     direction: self.global_light_direction.into_arr(),
                     color: self.global_light_color.into_arr(),
-                    ambient: 0.15,
+                    ambient: self.global_ambient_light,
                     ..Default::default()
                 };
                 let new_context = self.renderer.create_render_context(
@@ -448,7 +351,7 @@ impl Application {
                     &context.get_per_obj_dynamic_uniform_buffers()[1],
                 )?;
                 let model_vertex_buffer = self.model_vertex_buffer.clone();
-                let model_index_buffer = self.model_index_buffer.clone();
+                // let model_index_buffer = self.model_index_buffer.clone();
 
                 let record_draw_commands = |command_buffer: vk::CommandBuffer| unsafe {
                     current_ds.bind(command_buffer, &[]);
@@ -463,8 +366,9 @@ impl Application {
 
                     obj_ds.bind(command_buffer, &model_dynamic_offset);
                     model_vertex_buffer.bind(command_buffer);
-                    model_index_buffer.bind(command_buffer);
-                    model_index_buffer.draw(command_buffer);
+                    model_vertex_buffer.draw(command_buffer);
+                    // model_index_buffer.bind(command_buffer);
+                    // model_index_buffer.draw(command_buffer);
                 };
                 unsafe {
                     context.draw(record_draw_commands)?;
@@ -690,7 +594,7 @@ impl ApplicationHandler for Application {
         let light_ubo = renderer::GlobalLightUBO {
             direction: self.global_light_direction.into_arr(),
             color: self.global_light_color.into_arr(),
-            ambient: 0.05,
+            ambient: self.global_ambient_light,
             ..Default::default()
         };
         let context = match self.renderer.create_render_context(
@@ -767,20 +671,26 @@ impl ApplicationHandler for Application {
 }
 
 fn main() -> Result<()> {
-    if std::env::args().len() != 2 {
+    if std::env::args().len() != 2 && std::env::args().len() != 3 {
         return Err(Error::IncorrectProgramUsage);
     }
 
-    let img_path = {
+    let model_path = {
         let args: Vec<String> = std::env::args().collect();
-        std::path::PathBuf::from(args[args.len() - 1].clone())
+        std::path::PathBuf::from(args[1].clone())
+    };
+    let img_path = if std::env::args().len() == 3 {
+        let args: Vec<String> = std::env::args().collect();
+        std::path::PathBuf::from(args[2].clone())
+    } else {
+        std::path::PathBuf::from("files/images/default.png")
     };
     let event_loop = EventLoop::new()?;
 
     let mut app = {
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(img_path.as_path(), true, &display_handle)?
+        Application::new(img_path.as_path(), model_path.as_path(), true, &display_handle)?
     };
 
     event_loop.run_app(&mut app)?;

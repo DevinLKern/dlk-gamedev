@@ -456,6 +456,11 @@ impl Device {
         }
     }
 
+    #[inline]
+    pub(crate) unsafe fn cmd_draw(&self, command_buffer: vk::CommandBuffer, vertex_count: u32, instance_count: u32, first_vertex: u32, first_instance: u32) {
+        unsafe { self.device.cmd_draw(command_buffer, vertex_count, instance_count, first_vertex, first_instance) };
+    }
+
     vk_delegate_create!(allocate_memory, MemoryAllocateInfo, DeviceMemory);
     vk_delegate_destroy!(free_memory, DeviceMemory);
     vk_delegate_create!(create_buffer, BufferCreateInfo, Buffer);

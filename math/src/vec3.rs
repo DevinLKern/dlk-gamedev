@@ -56,6 +56,10 @@ impl<T: Zero + Copy> Vec3<T> {
     pub const fn into_arr(self) -> [T; 3] {
         [self.x(), self.y(), self.z()]
     }
+    #[inline]
+    pub const fn as_arr(&self) -> [T; 3] {
+        [self.x(), self.y(), self.z()]
+    }
 }
 
 impl Vec3<f32> {

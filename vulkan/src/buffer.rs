@@ -136,8 +136,10 @@ impl VertexBV {
         }
     }
 
-    pub unsafe fn draw(&self, _cmd: vk::CommandBuffer) {
-        todo!()
+    pub unsafe fn draw(&self, cmd: vk::CommandBuffer) {
+        unsafe {
+            self.buffer.device.cmd_draw(cmd, self.vertex_count, self.instance_count, 0, 0);
+        }
     }
 }
 
