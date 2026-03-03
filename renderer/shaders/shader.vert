@@ -1,6 +1,6 @@
 #version 450
 
-const uint MESH_FLAG_TEXTURED_BIT = 1;
+const uint MESH_FLAG_TEXTURED_BIT = (1 << 0);
 
 // set 0 is for objects that are updated every frame
 layout(std140, set = 0, binding = 0) uniform CameraUBO {

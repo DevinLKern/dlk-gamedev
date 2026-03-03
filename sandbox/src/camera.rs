@@ -1,4 +1,4 @@
-use math::{Mat4, Quat, RigidTransform, Vec3, Vec4, Zero};
+use math::{Mat4, Quat, RigidTransform, Vec3, Vec4};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
 

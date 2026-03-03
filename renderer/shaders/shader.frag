@@ -1,6 +1,6 @@
 #version 450
 
-const uint MESH_FLAG_TEXTURED_BIT = 1;
+const uint MESH_FLAG_TEXTURED_BIT = (1 << 0);
 
 // set 1 is for objects that are update every object
 layout(std140, set = 1, binding = 0) uniform MeshUBO {
@@ -30,7 +30,7 @@ void main() {
     vec3 normal_world_space = normalize(mat3(mesh.model) * v_normal);
     float light_intensity = world_light.ambient + max(0.0, dot(normal_world_space, -world_light.direction));
 
-    if (mesh.flags == MESH_FLAG_TEXTURED_BIT) {
+    if ((mesh.flags & MESH_FLAG_TEXTURED_BIT) != 0) {
         f_color = texture(tex_sampler, v_tex_coord) * light_intensity;
     } else {
         f_color = mesh.base_color * light_intensity;

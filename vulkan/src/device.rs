@@ -66,7 +66,7 @@ pub type SharedRef<T> = std::sync::Arc<T>;
 
 #[allow(dead_code)]
 impl Device {
-    pub fn new(instance: SharedInstanceRef) -> Result<SharedRef<Device>> {
+    pub fn new(instance: SharedInstanceRef) -> Result<SharedRef<Device>> {        
         let debug_messenger = instance.create_debug_utils_messenger()?;
 
         let queue_priority: f32 = 1.0;

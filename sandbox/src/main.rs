@@ -81,8 +81,7 @@ impl Application {
 
                 for geo in obj.geometry.iter() {
                     for shape in geo.shapes.iter() {
-                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
-                        {
+                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive {
                             for v in [v1, v2, v3] {
                                 let position = [
                                     obj.vertices[v.0].x as f32,
@@ -227,12 +226,18 @@ impl Application {
         let image = {
             let image_data = image::open(img_path)?;
 
-            let image = renderer.create_image(image_data)?;
-            // let scale = Vec3::new(image.width as f32, image.height as f32, 0.0).normalized();
-
-            image
+            renderer.create_image(image_data)?
         };
 
+        let plane_transform = math::AffineTransform {
+            position: model_transform.position.add(Vec3::ZERO.sub(WORLD_UP)),
+            orientation: math::Quat::unit_from_angle_axis(
+                -std::f32::consts::FRAC_PI_2,
+                WORLD_RIGHT,
+            ),
+            scalar: Vec3::new(20.0, 20.0, 20.0),
+        };
+        
         Ok(Self {
             mouse_sensitivity: 0.001,
             focused_window: None,
@@ -248,14 +253,7 @@ impl Application {
             model_transform,
             model_base_color: Vec4::new(1.0, 0.1, 0.4, 1.0),
             model_flags: 0,
-            plane_transform: math::AffineTransform {
-                position: WORLD_UP.scaled(-4.0),
-                orientation: math::Quat::unit_from_angle_axis(
-                    -std::f32::consts::FRAC_PI_2,
-                    WORLD_RIGHT,
-                ),
-                scalar: Vec3::new(20.0, 20.0, 20.0),
-            },
+            plane_transform,
             plane_base_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             global_light_direction: Vec3::ZERO.sub(WORLD_UP).add(WORLD_RIGHT.scaled(0.2)),
             global_light_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
@@ -713,12 +711,13 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
 
     let mut app = {
+        let debug_enabled = cfg!(debug_assertions);
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
         Application::new(
             img_path.as_path(),
             model_path.as_path(),
-            true,
+            debug_enabled,
             &display_handle,
         )?
     };
