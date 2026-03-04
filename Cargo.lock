@@ -2037,7 +2037,6 @@ dependencies = [
  "ash",
  "ash-window",
  "math",
- "spirv",
  "winit",
 ]
 

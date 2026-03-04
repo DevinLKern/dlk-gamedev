@@ -19,7 +19,6 @@ pub enum Error {
     VkError(ash::vk::Result),
     NoViablePhysicalDevices,
     IoError(std::io::Error),
-    SpirvError(spirv::result::Error),
     TooManyDescriptorSets,
     CouldNotDetermineEntryPointName,
     CouldNotDetermineFormat,
@@ -43,7 +42,6 @@ impl std::fmt::Display for Error {
             Self::VkError(r) => write!(f, "Vk error: {:?}", r),
             Self::NoViablePhysicalDevices => write!(f, "No viable physical devices found"),
             Self::IoError(e) => write!(f, "I/O error: {}", e),
-            Self::SpirvError(e) => write!(f, "SPIR-V error: {}", e),
             Self::TooManyDescriptorSets => write!(f, "Too many descriptor sets allocated"),
             Self::CouldNotDetermineFormat => write!(f, "Could not determine format"),
             Self::CouldNotGetSurfaceFormats(r) => {
@@ -87,12 +85,6 @@ impl From<ash::vk::Result> for Error {
 impl From<std::io::Error> for Error {
     fn from(value: std::io::Error) -> Self {
         Self::IoError(value)
-    }
-}
-
-impl From<spirv::result::Error> for Error {
-    fn from(value: spirv::result::Error) -> Self {
-        Self::SpirvError(value)
     }
 }
 

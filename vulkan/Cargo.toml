@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-spirv = { path = "../spirv" }
 math = { path = "../math" }
 winit = "0.30.12"
 ash = "0.38.0"

@@ -84,17 +84,49 @@ impl Renderer {
         window: &winit::window::Window,
         image: Rc<vulkan::Image>,
     ) -> result::Result<RenderContext> {
-        let vert_shader_path = std::path::Path::new(&crate::SHADER_VERT);
-        let frag_shader_path = std::path::Path::new(&crate::SHADER_FRAG);
+        let pipeline_layout = {
+            let set_bindings: &[&[vk::DescriptorSetLayoutBinding]] = &[
+                // SET 0
+                &[
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::VERTEX,
+                        ..Default::default()
+                    }
+                ],
+                // SET 1
+                &[
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    }
+                ],
+                // SET 2
+                &[
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 1,
+                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    }
+                ],
+            ];
 
-        let vert_spv_module = Rc::new(spirv::Module::from_file(&vert_shader_path)?);
-        let frag_spv_module = Rc::new(spirv::Module::from_file(&frag_shader_path)?);
-
-        let pipeline_layout = Rc::new(vulkan::PipelineLayout::new(
-            self.device.clone(),
-            &vert_spv_module,
-            &frag_spv_module,
-        )?);
+            Rc::new(vulkan::PipelineLayout::new(self.device.clone(), set_bindings)?)
+        };
 
         let per_frame_ds_index = 0;
         let per_obj_ds_index = 1;
@@ -331,8 +363,6 @@ impl Renderer {
         crate::RenderContext::new(
             self.device.clone(),
             window,
-            &vert_shader_path,
-            &frag_shader_path,
             pipeline_layout,
             per_frame_descriptor_sets,
             per_obj_descriptor_set,

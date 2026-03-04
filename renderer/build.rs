@@ -155,9 +155,9 @@ fn generate_shader_paths(shader_paths_path: &PathBuf, paths: &[PathBuf]) -> Resu
 
         writeln!(
             w,
-            "const {}_{}: &str = \"{}/{}.spv\";",
-            prefix.display(),
+            "const {}_{}_PATH: &str = \"{}/{}.spv\";",
             extension.display(),
+            prefix.display(),
             env!("CARGO_MANIFEST_DIR"),
             path.to_str().unwrap()
         )?;

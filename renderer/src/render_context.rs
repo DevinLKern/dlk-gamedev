@@ -30,8 +30,6 @@ impl RenderContext {
     pub fn new(
         device: SharedDeviceRef,
         window: &winit::window::Window,
-        vertex_shader_path: &std::path::Path,
-        fragment_shader_path: &std::path::Path,
         pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
         per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
         per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
@@ -219,9 +217,10 @@ impl RenderContext {
             let frag_entry_point_name =
                 std::ffi::CString::new(crate::ENTRY_POINT_NAME_SHADER_FRAG).unwrap();
 
-            let vert_shader_module = vulkan::ShaderModule::new(vertex_shader_path, device.clone())?;
+            let vert_shader_module =
+                vulkan::ShaderModule::new(&std::path::Path::new(crate::VERT_SHADER_PATH), device.clone())?;
             let frag_shader_module =
-                vulkan::ShaderModule::new(fragment_shader_path, device.clone())?;
+                vulkan::ShaderModule::new(&std::path::Path::new(crate::FRAG_SHADER_PATH), device.clone())?;
 
             let stages = {
                 let vert_stage = vk::PipelineShaderStageCreateInfo {

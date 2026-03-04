@@ -34,10 +34,10 @@ pub struct DescriptorSetLayout {
 }
 
 impl DescriptorSetLayout {
-    pub fn new_raw(
+    pub fn new(
         device: SharedDeviceRef,
         set: u32,
-        bindings: Box<[vk::DescriptorSetLayoutBinding]>,
+        bindings: &[vk::DescriptorSetLayoutBinding],
     ) -> VkResult<DescriptorSetLayout> {
         let create_info = vk::DescriptorSetLayoutCreateInfo {
             binding_count: bindings.len() as u32,
