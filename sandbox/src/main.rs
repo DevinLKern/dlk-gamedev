@@ -24,16 +24,6 @@ use math::Vec3;
 use math::Vec4;
 use math::{Quat, Zero};
 
-macro_rules! trace_error {
-    ($e:expr) => {
-        println!(
-            "[ERROR] LINE: {}, FILE \'{}\', ERROR: \'{}\'",
-            line!(),
-            file!(),
-            $e
-        )
-    };
-}
 
 #[allow(dead_code)]
 struct Application {
@@ -151,7 +141,8 @@ impl Application {
                     )
                 };
 
-                let vb = renderer.create_vertex_buffer(data, verts.len() as u32)?;
+                let vb = renderer.create_vertex_buffer(data, verts.len() as u32)
+                    .inspect_err(|e| tracing::error!("{e}"))?;
                 vertex_buffers.push(vb);
             }
 
@@ -204,7 +195,8 @@ impl Application {
                 )
             };
 
-            let vb = renderer.create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)?;
+            let vb = renderer.create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)
+                .inspect_err(|e| tracing::error!("{e}"))?;
 
             Rc::new(vb)
         };
@@ -279,7 +271,7 @@ impl Application {
 
         match event {
             WindowEvent::CloseRequested => {
-                println!("close requested!!");
+                tracing::debug!("close requested!");
                 // unsafe { self.renderer.destroy_render_context(context) };
                 return Ok(true);
             }
@@ -339,7 +331,7 @@ impl Application {
                     camera_ubo_ptr,
                     std::mem::size_of::<renderer::CameraUBO>(),
                     current_buffer,
-                )?;
+                ).inspect_err(|e| tracing::error!("{e}"))?;
 
                 let current_ds = context.get_current_per_frame_descriptor_set();
                 let obj_ds = context.get_per_obj_descriptor_set();
@@ -364,7 +356,7 @@ impl Application {
                     mesh_ubo_ptr,
                     std::mem::size_of::<renderer::MeshUBO>(),
                     &context.get_per_obj_dynamic_uniform_buffers()[1],
-                )?;
+                ).inspect_err(|e| tracing::error!("{e}"))?;
                 let model_vertex_buffers = self.model_vertex_buffers.clone();
                 // let model_index_buffer = self.model_index_buffer.clone();
 
@@ -386,7 +378,7 @@ impl Application {
                     }
                 };
                 unsafe {
-                    context.draw(record_draw_commands)?;
+                    context.draw(record_draw_commands).inspect_err(|e| tracing::error!("{e}"))?;
                 }
                 window.request_redraw();
             }
@@ -403,7 +395,7 @@ impl Application {
                                 self.active_window = None;
                                 match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
                                     Err(e) => {
-                                        println!("{}", e);
+                                        tracing::error!("{}", e);
                                     }
                                     _ => {}
                                 }
@@ -465,12 +457,12 @@ impl Application {
                 if b {
                     self.focused_window = Some(*window_id);
                 }
-                println!("Focused!");
+                // tracing::trace!("Focused!");
             }
             WindowEvent::MouseInput { button, .. } => {
                 use winit::event::MouseButton;
 
-                println!("Mouse Input!");
+                // tracing::trace!("Mouse Input!");
                 match button {
                     MouseButton::Left => {
                         self.active_window = self.focused_window;
@@ -485,13 +477,13 @@ impl Application {
                 }
             }
             WindowEvent::CursorMoved { .. } => {
-                // println!("Cursor Moved!: {} {}", position.x, position.y);
+                // tracing::trace!("Cursor Moved!: {} {}", position.x, position.y);
             }
             WindowEvent::AxisMotion { .. } => {
                 // println!("AxisMotion");
             }
             WindowEvent::ActivationTokenDone { .. } => {
-                println!("Activation Token Done");
+                // tracing::info!("Activation Token Done");
             }
             WindowEvent::CursorLeft { .. } => {
                 // println!("CursorLeft!");
@@ -503,10 +495,10 @@ impl Application {
                 // println!("Occluded!");
             }
             WindowEvent::DroppedFile(_) => {
-                println!("Dropped file!");
+                // println!("Dropped file!");
             }
             WindowEvent::HoveredFile(_) => {
-                println!("HoveredFile");
+                // println!("HoveredFile");
             }
             WindowEvent::Ime(_) => {
                 // println!("Ime!");
@@ -515,37 +507,37 @@ impl Application {
                 // println!("CursorEntered");
             }
             WindowEvent::Destroyed { .. } => {
-                println!("Destroyed!");
+                // tracing::trace!("Destroyed!");
             }
             WindowEvent::HoveredFileCancelled => {
-                println!("HoveredFileCancelled");
+                // tracing::info!("HoveredFileCancelled");
             }
             WindowEvent::ModifiersChanged(_) => {
                 // println!("ModifiersChanged");
             }
             WindowEvent::TouchpadPressure { .. } => {
-                println!("TouchpadPressure");
+                // println!("TouchpadPressure");
             }
             WindowEvent::PinchGesture { .. } => {
-                println!("PinchGesture");
+                // println!("PinchGesture");
             }
             WindowEvent::DoubleTapGesture { .. } => {
-                println!("DoubleTapGesture");
+                // println!("DoubleTapGesture");
             }
             WindowEvent::PanGesture { .. } => {
-                println!("PanGesture");
+                // println!("PanGesture");
             }
             WindowEvent::RotationGesture { .. } => {
-                println!("RotationGesture");
+                // println!("RotationGesture");
             }
             WindowEvent::Touch(_) => {
-                println!("Touch");
+                // println!("Touch");
             }
             WindowEvent::ScaleFactorChanged { .. } => {
-                println!("ScaleFactorChanged");
+                // println!("ScaleFactorChanged");
             }
             WindowEvent::ThemeChanged(_) => {
-                println!("ThemeChanged");
+                // println!("ThemeChanged");
             }
         }
 
@@ -558,13 +550,13 @@ impl ApplicationHandler for Application {
             return;
         }
 
-        println!("Exiting!");
+        // tracing::trace!("Exiting!");
         self.exiting = true;
 
         return event_loop.exit();
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        println!("Resumed!");
+        // tracing::trace!("Resumed!");
 
         if !self.windows.is_empty() {
             return;
@@ -575,7 +567,7 @@ impl ApplicationHandler for Application {
         let window = match event_loop.create_window(window_attributes) {
             Ok(w) => w,
             Err(e) => {
-                println!("Could not create window: {e:?}");
+                tracing::error!("{}", e);
                 return self.exiting(event_loop);
             }
         };
@@ -629,7 +621,7 @@ impl ApplicationHandler for Application {
         ) {
             Ok(context) => context,
             Err(e) => {
-                trace_error!(e);
+                tracing::error!("{}", e);
                 return self.exiting(event_loop);
             }
         };
@@ -664,7 +656,7 @@ impl ApplicationHandler for Application {
                 camera.rotate(dx as f32, dy as f32);
             }
             _ => {
-                // println!("Not implemented")
+                // tracing::info!("Not implemented")
             }
         }
     }
@@ -686,7 +678,7 @@ impl ApplicationHandler for Application {
                 }
             }
             Err(e) => {
-                trace_error!(e);
+                tracing::error!("{}", e);
                 self.exiting(event_loop);
             }
         }
@@ -694,7 +686,18 @@ impl ApplicationHandler for Application {
 }
 
 fn main() -> Result<()> {
+    let file_appender = tracing_appender::rolling::daily("logs", "app.log");
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+
+    tracing_subscriber::fmt()
+        .with_writer(non_blocking)
+        .with_max_level(tracing::Level::DEBUG)
+        .with_file(true)
+        .with_line_number(true)
+        .init();
+    
     if std::env::args().len() != 2 && std::env::args().len() != 3 {
+        println!("Invalid program arguments. Usage: dlk-gamedev [model_path]");
         return Err(Error::IncorrectProgramUsage);
     }
 
@@ -702,13 +705,9 @@ fn main() -> Result<()> {
         let args: Vec<String> = std::env::args().collect();
         std::path::PathBuf::from(args[1].clone())
     };
-    let img_path = if std::env::args().len() == 3 {
-        let args: Vec<String> = std::env::args().collect();
-        std::path::PathBuf::from(args[2].clone())
-    } else {
-        std::path::PathBuf::from("files/images/default.png")
-    };
-    let event_loop = EventLoop::new()?;
+    let img_path = std::path::PathBuf::from("files").join("images").join("default.png");
+
+    let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 
     let mut app = {
         let debug_enabled = cfg!(debug_assertions);
@@ -722,7 +721,7 @@ fn main() -> Result<()> {
         )?
     };
 
-    event_loop.run_app(&mut app)?;
+    event_loop.run_app(&mut app).inspect_err(|e| tracing::error!("{e}"))?;
 
     Ok(())
 }

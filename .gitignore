@@ -1,4 +1,6 @@
 /target
+/logs
+/files/models
 **.mtl
 **.obj
 **.spv

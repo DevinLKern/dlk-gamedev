@@ -1,5 +1,3 @@
-use crate::trace_error;
-
 use ash::vk;
 use std::rc::Rc;
 use vulkan::{Pipeline, device::SharedDeviceRef};
@@ -49,7 +47,7 @@ impl RenderContext {
             .collect();
 
         let swapchain =
-            vulkan::Swapchain::new(device.clone(), window).inspect_err(|e| trace_error!(e))?;
+            vulkan::Swapchain::new(device.clone(), window).inspect_err(|e| tracing::error!("{}", e))?;
 
         let command_buffer_executed = {
             let mut fences: Vec<vk::Fence> = Vec::with_capacity(MAX_FRAME_COUNT);
@@ -60,7 +58,7 @@ impl RenderContext {
                 };
                 let fence =
                     unsafe { device.create_fence(&fence_create_info) }.inspect_err(|e| {
-                        trace_error!(e);
+                        tracing::error!("{}", e);
                         unsafe {
                             for f in fences.iter() {
                                 device.destroy_fence(*f);
@@ -82,7 +80,7 @@ impl RenderContext {
                 };
                 let semaphore = unsafe { device.create_semaphore(&semaphore_create_info) }
                     .inspect_err(|e| {
-                        trace_error!(e);
+                        tracing::error!("{}", e);
                         unsafe {
                             for s in semaphores.iter() {
                                 device.destroy_semaphore(*s);
@@ -112,7 +110,7 @@ impl RenderContext {
                     };
 
                     unsafe { device.create_command_pool(&pool_create_info) }.inspect_err(|e| {
-                        trace_error!(e);
+                        tracing::error!("{}", e);
                         unsafe {
                             for semaphore in image_acquired.iter() {
                                 device.destroy_semaphore(*semaphore);
@@ -136,7 +134,7 @@ impl RenderContext {
 
                     let buffers = unsafe { device.allocate_command_buffers(&buffer_allocate_info) }
                         .inspect_err(|e| {
-                            trace_error!(e);
+                            tracing::error!("{}", e);
                             unsafe {
                                 device.destroy_command_pool(pool);
                                 for (pool, buffer) in infos.iter() {
@@ -167,7 +165,7 @@ impl RenderContext {
         let depth_stencil_format = device
             .find_viable_depth_stencil_format()
             .ok_or(vulkan::result::Error::CouldNotDetermineFormat)
-            .inspect_err(|e| trace_error!(e))?;
+            .inspect_err(|e| tracing::error!("{}", e))?;
 
         let depth_images = {
             let mut images = Vec::with_capacity(swapchain.get_image_count());
@@ -188,7 +186,7 @@ impl RenderContext {
             for _ in 0..swapchain.get_image_count() {
                 let image = vulkan::image::Image::new(device.clone(), &depth_image_create_info)
                     .inspect_err(|e| {
-                        trace_error!(e);
+                        tracing::error!("{}", e);
                         unsafe {
                             for (pool, buffer) in command_infos.iter() {
                                 device.free_command_buffers(*pool, &[*buffer]);
@@ -591,18 +589,6 @@ impl RenderContext {
                 self.device
                     .cmd_set_viewport(*command_buffer, 0, &[viewport]);
                 self.device.cmd_set_scissor(*command_buffer, 0, &[scissor]);
-
-                // self.device.cmd_bind_descriptor_sets(
-                //     *command_buffer,
-                //     self.pipeline.get_layout().bind_point,
-                //     self.pipeline.get_layout().handle,
-                //     0,
-                //     &[
-                //         self.per_frame_descriptor_sets[self.index].handle,
-                //         self.other_descriptor_sets[0].handle,
-                //     ],
-                //     &[],
-                // );
             };
         }
 
@@ -647,7 +633,7 @@ impl RenderContext {
         unsafe {
             self.device
                 .end_command_buffer(*command_buffer)
-                .inspect_err(|e| trace_error!(e))?;
+                .inspect_err(|e| tracing::error!("{}", e))?;
         }
 
         // Submit

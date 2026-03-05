@@ -1,5 +1,4 @@
 use crate::device::SharedDeviceRef;
-use crate::trace_error;
 use crate::{descriptor::DescriptorSetLayout, result::Result};
 use ash::vk::{self, GraphicsPipelineCreateInfo};
 use std::rc::Rc;
@@ -82,8 +81,7 @@ impl Pipeline {
         let pipelines = unsafe {
             device.create_graphics_pipelines(vk::PipelineCache::null(), &pipeline_create_info)
         }
-        .map_err(|(_, vk_err)| vk_err)
-        .inspect_err(|e| trace_error!(e))?;
+        .map_err(|(_, vk_err)| vk_err)?;
 
         Ok(Pipeline {
             device,

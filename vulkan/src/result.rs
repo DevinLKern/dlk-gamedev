@@ -1,15 +1,3 @@
-#[macro_export]
-macro_rules! trace_error {
-    ($e:expr) => {
-        println!(
-            "[ERROR] LINE: {}, FILE \'{}\', ERROR: \'{}\'",
-            line!(),
-            file!(),
-            $e
-        )
-    };
-}
-
 #[derive(Debug)]
 pub enum Error {
     LoadingError(ash::LoadingError),

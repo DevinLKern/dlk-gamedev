@@ -1,7 +1,6 @@
 use crate::allocator::find_memory_index;
 use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
-use crate::trace_error;
 
 use ash::vk;
 
@@ -196,15 +195,13 @@ impl Image {
                 ..Default::default()
             }
         };
-        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|e| {
-            trace_error!(e);
+        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| {
             unsafe {
                 device.destroy_image(image);
             }
         })?;
 
-        unsafe { device.bind_image_memory(image, memory, 0) }.inspect_err(|e| {
-            trace_error!(e);
+        unsafe { device.bind_image_memory(image, memory, 0) }.inspect_err(|_| {
             unsafe {
                 device.free_memory(memory);
                 device.destroy_image(image);
@@ -212,8 +209,7 @@ impl Image {
         })?;
 
         let image_view =
-            unsafe { device.create_image_view(&image_view_create_info) }.inspect_err(|e| {
-                trace_error!(e);
+            unsafe { device.create_image_view(&image_view_create_info) }.inspect_err(|_| {
                 unsafe {
                     device.free_memory(memory);
                     device.destroy_image(image)

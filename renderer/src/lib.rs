@@ -63,17 +63,17 @@ impl Renderer {
         })
     }
     fn get_transfer_buffer(&self, size: u64) -> result::Result<vulkan::Buffer> {
-        let transfer_buffer_create_info = vulkan::BufferCreateInfo {
+        let create_info = vulkan::BufferCreateInfo {
             size: size,
             usage: vk::BufferUsageFlags::TRANSFER_SRC,
             memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                 | vk::MemoryPropertyFlags::HOST_COHERENT,
         };
 
-        let transfer_buffer =
-            vulkan::Buffer::new(self.device.clone(), &transfer_buffer_create_info)?;
+        let buffer =
+            vulkan::Buffer::new(self.device.clone(), &create_info).inspect_err(|e| tracing::error!("{}", e))?;
 
-        Ok(transfer_buffer)
+        Ok(buffer)
     }
     #[inline]
     pub fn create_render_context(
@@ -187,7 +187,7 @@ impl Renderer {
                     descriptor_pool.clone(),
                     per_obj_ds_index,
                     pipeline_layout.clone(),
-                )?
+                ).inspect_err(|e| tracing::error!("{}", e))?
             };
             let other_descriptor_set = {
                 vulkan::DescriptorSet::allocate(
@@ -195,7 +195,7 @@ impl Renderer {
                     descriptor_pool.clone(),
                     other_ds_index,
                     pipeline_layout.clone(),
-                )?
+                ).inspect_err(|e| tracing::error!("{}", e))?
             };
 
             (
@@ -240,7 +240,7 @@ impl Renderer {
         let per_frame_uniform_buffers = self.create_uniform_buffers(
             per_frame_uniform_buffer_size,
             per_frame_descriptor_sets.len() as u64,
-        )?;
+        ).inspect_err(|e| tracing::error!("{e}"))?;
         for bv in per_frame_uniform_buffers.iter() {
             unsafe {
                 let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
@@ -264,7 +264,8 @@ impl Renderer {
             }
         }
 
-        let other_uniform_buffer = self.create_uniform_buffers(other_uniform_buffer_size, 1)?;
+        let other_uniform_buffer = self.create_uniform_buffers(other_uniform_buffer_size, 1)
+            .inspect_err(|e| tracing::error!("{e}"))?;
         let other_uniform_buffer = other_uniform_buffer.into_iter().next().unwrap();
         unsafe {
             let dst = other_uniform_buffer
@@ -527,7 +528,8 @@ impl Renderer {
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
             };
 
-            vulkan::Buffer::new(self.device.clone(), &create_info)?
+            vulkan::Buffer::new(self.device.clone(), &create_info)
+                .inspect_err(|e| tracing::error!("{}", e))?
         };
 
         let buffer = Rc::new(buffer);

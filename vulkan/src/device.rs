@@ -1,5 +1,6 @@
 use crate::result::{Error, Result};
-use crate::{SharedInstanceRef, trace_error};
+use crate::SharedInstanceRef;
+
 use ash::prelude::VkResult;
 use ash::vk;
 use ash::vk::*;
@@ -76,9 +77,6 @@ impl Device {
                 instance
                     .raw()
                     .enumerate_physical_devices()
-                    .inspect_err(|e| {
-                        trace_error!(e);
-                    })
             }?;
 
             let viable_physical_devices: Box<[(usize, vk::PhysicalDevice)]> = all_physical_devices
@@ -205,8 +203,7 @@ impl Device {
                         &device_create_info,
                         instance.allocation_callbacks_ref(),
                     )
-                    .inspect_err(|e| {
-                        trace_error!(e);
+                    .inspect_err(|_| {
                         if let Some(messenger) = debug_messenger {
                             instance.destroy_debug_utils_messenger(messenger);
                         }

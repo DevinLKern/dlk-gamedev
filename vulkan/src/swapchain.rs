@@ -1,6 +1,5 @@
 use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
-use crate::trace_error;
 use ash::vk;
 
 pub struct Swapchain {
@@ -18,15 +17,13 @@ impl Swapchain {
     pub fn new(device: SharedDeviceRef, window: &winit::window::Window) -> Result<Swapchain> {
         let surface = unsafe { device.create_surface(window) }?;
 
-        let surface_format = unsafe { device.get_physical_device_surface_formats(surface) }
-            .inspect_err(|e| trace_error!(e))?
+        let surface_format = unsafe { device.get_physical_device_surface_formats(surface) }?
             .into_iter()
             .next()
             .ok_or(Error::NoSurfaceFomratsSupported)?;
 
         let (min_image_count, max_image_count, image_extent) = {
-            let capabilities = unsafe { device.get_physical_device_surface_capabilities(surface) }
-                .inspect_err(|e| trace_error!(e))?;
+            let capabilities = unsafe { device.get_physical_device_surface_capabilities(surface) }?;
 
             let extent = if capabilities.current_extent.width == u32::MAX {
                 ash::vk::Extent2D {
@@ -53,8 +50,7 @@ impl Swapchain {
         };
 
         let (present_mode, desired_image_count) = {
-            let modes = unsafe { device.get_physical_device_surface_present_modes(surface) }
-                .inspect_err(|e| trace_error!(e))?;
+            let modes = unsafe { device.get_physical_device_surface_present_modes(surface) }?;
 
             if modes.contains(&ash::vk::PresentModeKHR::MAILBOX) {
                 (ash::vk::PresentModeKHR::MAILBOX, 3)
@@ -80,12 +76,10 @@ impl Swapchain {
                 ..Default::default()
             };
 
-            unsafe { device.create_swapchain(&swapchain_create_info) }
-                .inspect_err(|e| trace_error!(e))?
+            unsafe { device.create_swapchain(&swapchain_create_info) }?
         };
 
-        let swapchain_images = unsafe { device.get_swapchain_images(swapchain) }
-            .inspect_err(|e| trace_error!(e))?
+        let swapchain_images = unsafe { device.get_swapchain_images(swapchain) }?
             .into_boxed_slice();
 
         let mut views = Vec::with_capacity(swapchain_images.len());
@@ -110,8 +104,7 @@ impl Swapchain {
                 ..Default::default()
             };
 
-            let view = unsafe { device.create_image_view(&image_view_create_info) }
-                .inspect_err(|e| trace_error!(e))?;
+            let view = unsafe { device.create_image_view(&image_view_create_info) }?;
             views.push(view);
         }
         let views = views.into_boxed_slice();

@@ -1,4 +1,4 @@
-use crate::{Error, Result, trace_error};
+use crate::{Error, Result};
 use ash::prelude::VkResult;
 use ash::vk::{self, AllocationCallbacks};
 
@@ -119,8 +119,7 @@ impl Instance {
                 ..Default::default()
             };
 
-            unsafe { entry.create_instance(&instance_create_info, allocation_callbacks.as_ref()) }
-                .inspect_err(|e| trace_error!(e))?
+            unsafe { entry.create_instance(&instance_create_info, allocation_callbacks.as_ref()) }?
         };
 
         let debug_utils = if debug_enabled {

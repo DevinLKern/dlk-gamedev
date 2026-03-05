@@ -1,7 +1,6 @@
 use crate::allocator::find_memory_index;
 use crate::device::SharedDeviceRef;
 use crate::result::{Error, Result};
-use crate::trace_error;
 
 use ash::vk;
 use std::rc::Rc;
@@ -29,8 +28,7 @@ impl Buffer {
             ..Default::default()
         };
 
-        let buffer = unsafe { device.create_buffer(&buffer_create_info) }
-            .inspect_err(|e| trace_error!(e))?;
+        let buffer = unsafe { device.create_buffer(&buffer_create_info) }?;
 
         let memory_requirements = unsafe { device.get_buffer_memory_requirements(buffer) };
         let memory_properties = unsafe { device.get_physical_device_memory_properties() };
@@ -42,8 +40,7 @@ impl Buffer {
         .ok_or(Error::CouldNotFindMemoryTypeIndex(
             create_info.memory_property_flags,
         ))
-        .inspect_err(|e| {
-            trace_error!(e);
+        .inspect_err(|_| {
             unsafe {
                 device.destroy_buffer(buffer);
             }
@@ -54,8 +51,7 @@ impl Buffer {
             memory_type_index,
             ..Default::default()
         };
-        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|e| {
-            trace_error!(e);
+        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| {
             unsafe {
                 device.destroy_buffer(buffer);
             }
@@ -63,8 +59,7 @@ impl Buffer {
 
         let offset = 0;
 
-        unsafe { device.bind_buffer_memory(buffer, memory, offset) }.inspect_err(|e| {
-            trace_error!(e);
+        unsafe { device.bind_buffer_memory(buffer, memory, offset) }.inspect_err(|_| {
             unsafe {
                 device.destroy_buffer(buffer);
                 device.free_memory(memory);
