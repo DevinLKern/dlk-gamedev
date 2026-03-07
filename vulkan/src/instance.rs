@@ -2,34 +2,6 @@ use crate::{Error, Result};
 use ash::prelude::VkResult;
 use ash::vk::{self, AllocationCallbacks};
 
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    let callback_data = unsafe { *p_callback_data };
-    let message_id_number = callback_data.message_id_number;
-
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy() }
-    };
-
-    let message = if callback_data.p_message.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy() }
-    };
-
-    println!(
-        "{message_severity:?}:\n{message_type:?} [{message_id_name} ({message_id_number})] : {message}",
-    );
-
-    vk::FALSE
-}
-
 #[allow(dead_code)]
 pub struct Instance {
     pub(crate) entry: ash::Entry,
@@ -146,7 +118,10 @@ impl Instance {
     pub const fn raw(&self) -> &ash::Instance {
         &self.instance
     }
-    pub fn create_debug_utils_messenger(&self) -> VkResult<Option<vk::DebugUtilsMessengerEXT>> {
+    pub fn create_debug_utils_messenger(
+        &self,
+        pfn_user_callback: vk::PFN_vkDebugUtilsMessengerCallbackEXT,
+    ) -> VkResult<Option<vk::DebugUtilsMessengerEXT>> {
         if let Some(utils) = self.debug_utils.as_ref() {
             let create_info = vk::DebugUtilsMessengerCreateInfoEXT {
                 s_type: vk::StructureType::DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
@@ -156,7 +131,7 @@ impl Instance {
                 message_type: vk::DebugUtilsMessageTypeFlagsEXT::GENERAL
                     | vk::DebugUtilsMessageTypeFlagsEXT::VALIDATION
                     | vk::DebugUtilsMessageTypeFlagsEXT::PERFORMANCE,
-                pfn_user_callback: Some(vulkan_debug_callback),
+                pfn_user_callback,
                 p_user_data: std::ptr::null_mut(),
                 ..Default::default()
             };

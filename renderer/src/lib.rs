@@ -70,8 +70,8 @@ impl Renderer {
                 | vk::MemoryPropertyFlags::HOST_COHERENT,
         };
 
-        let buffer =
-            vulkan::Buffer::new(self.device.clone(), &create_info).inspect_err(|e| tracing::error!("{}", e))?;
+        let buffer = vulkan::Buffer::new(self.device.clone(), &create_info)
+            .inspect_err(|e| tracing::error!("{}", e))?;
 
         Ok(buffer)
     }
@@ -87,25 +87,21 @@ impl Renderer {
         let pipeline_layout = {
             let set_bindings: &[&[vk::DescriptorSetLayoutBinding]] = &[
                 // SET 0
-                &[
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 0,
-                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::VERTEX,
-                        ..Default::default()
-                    }
-                ],
+                &[vk::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX,
+                    ..Default::default()
+                }],
                 // SET 1
-                &[
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 0,
-                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    }
-                ],
+                &[vk::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                    ..Default::default()
+                }],
                 // SET 2
                 &[
                     vk::DescriptorSetLayoutBinding {
@@ -121,11 +117,14 @@ impl Renderer {
                         descriptor_count: 1,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         ..Default::default()
-                    }
+                    },
                 ],
             ];
 
-            Rc::new(vulkan::PipelineLayout::new(self.device.clone(), set_bindings)?)
+            Rc::new(vulkan::PipelineLayout::new(
+                self.device.clone(),
+                set_bindings,
+            )?)
         };
 
         let per_frame_ds_index = 0;
@@ -187,7 +186,8 @@ impl Renderer {
                     descriptor_pool.clone(),
                     per_obj_ds_index,
                     pipeline_layout.clone(),
-                ).inspect_err(|e| tracing::error!("{}", e))?
+                )
+                .inspect_err(|e| tracing::error!("{}", e))?
             };
             let other_descriptor_set = {
                 vulkan::DescriptorSet::allocate(
@@ -195,7 +195,8 @@ impl Renderer {
                     descriptor_pool.clone(),
                     other_ds_index,
                     pipeline_layout.clone(),
-                ).inspect_err(|e| tracing::error!("{}", e))?
+                )
+                .inspect_err(|e| tracing::error!("{}", e))?
             };
 
             (
@@ -237,10 +238,12 @@ impl Renderer {
         };
 
         // 3 == maximum number of frames?
-        let per_frame_uniform_buffers = self.create_uniform_buffers(
-            per_frame_uniform_buffer_size,
-            per_frame_descriptor_sets.len() as u64,
-        ).inspect_err(|e| tracing::error!("{e}"))?;
+        let per_frame_uniform_buffers = self
+            .create_uniform_buffers(
+                per_frame_uniform_buffer_size,
+                per_frame_descriptor_sets.len() as u64,
+            )
+            .inspect_err(|e| tracing::error!("{e}"))?;
         for bv in per_frame_uniform_buffers.iter() {
             unsafe {
                 let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
@@ -264,7 +267,8 @@ impl Renderer {
             }
         }
 
-        let other_uniform_buffer = self.create_uniform_buffers(other_uniform_buffer_size, 1)
+        let other_uniform_buffer = self
+            .create_uniform_buffers(other_uniform_buffer_size, 1)
             .inspect_err(|e| tracing::error!("{e}"))?;
         let other_uniform_buffer = other_uniform_buffer.into_iter().next().unwrap();
         unsafe {

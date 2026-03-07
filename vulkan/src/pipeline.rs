@@ -25,20 +25,20 @@ impl std::fmt::Display for PipelineLayout {
 
 impl PipelineLayout {
     // bindings should be sorted such that bindings[0] corresponds to set 0
-    pub fn new(device: SharedDeviceRef, set_bindings: &[&[vk::DescriptorSetLayoutBinding]]) -> Result<PipelineLayout> {
+    pub fn new(
+        device: SharedDeviceRef,
+        set_bindings: &[&[vk::DescriptorSetLayoutBinding]],
+    ) -> Result<PipelineLayout> {
         let mut set_layouts = Vec::<crate::DescriptorSetLayout>::new();
         for (set, bindings) in set_bindings.iter().enumerate() {
-            let set_layout = crate::DescriptorSetLayout::new(
-                device.clone(),
-                set as u32,
-                bindings,
-            )?;
+            let set_layout = crate::DescriptorSetLayout::new(device.clone(), set as u32, bindings)?;
             set_layouts.push(set_layout);
         }
         let set_layouts = set_layouts.into_boxed_slice();
-        
+
         let handle = {
-            let vk_set_layouts: Box<[vk::DescriptorSetLayout]> = set_layouts.iter().map(|dsl| dsl.handle).collect();
+            let vk_set_layouts: Box<[vk::DescriptorSetLayout]> =
+                set_layouts.iter().map(|dsl| dsl.handle).collect();
             let create_info = vk::PipelineLayoutCreateInfo {
                 set_layout_count: vk_set_layouts.len() as u32,
                 p_set_layouts: vk_set_layouts.as_ptr(),
@@ -47,8 +47,13 @@ impl PipelineLayout {
 
             unsafe { device.create_pipeline_layout(&create_info) }?
         };
-        
-        Ok(PipelineLayout { device, bind_point: vk::PipelineBindPoint::GRAPHICS, set_layouts, handle })
+
+        Ok(PipelineLayout {
+            device,
+            bind_point: vk::PipelineBindPoint::GRAPHICS,
+            set_layouts,
+            handle,
+        })
     }
     #[inline]
     pub fn get_set_layouts(&self) -> &[DescriptorSetLayout] {

@@ -1,5 +1,5 @@
-use crate::result::{Error, Result};
 use crate::SharedInstanceRef;
+use crate::result::{Error, Result};
 
 use ash::prelude::VkResult;
 use ash::vk;
@@ -67,17 +67,16 @@ pub type SharedRef<T> = std::sync::Arc<T>;
 
 #[allow(dead_code)]
 impl Device {
-    pub fn new(instance: SharedInstanceRef) -> Result<SharedRef<Device>> {        
-        let debug_messenger = instance.create_debug_utils_messenger()?;
+    pub fn new(
+        instance: SharedInstanceRef,
+        pfn_debug_utils_callback: vk::PFN_vkDebugUtilsMessengerCallbackEXT,
+    ) -> Result<SharedRef<Device>> {
+        let debug_messenger = instance.create_debug_utils_messenger(pfn_debug_utils_callback)?;
 
         let queue_priority: f32 = 1.0;
 
         let (queue_create_info, physical_device) = {
-            let all_physical_devices = unsafe {
-                instance
-                    .raw()
-                    .enumerate_physical_devices()
-            }?;
+            let all_physical_devices = unsafe { instance.raw().enumerate_physical_devices() }?;
 
             let viable_physical_devices: Box<[(usize, vk::PhysicalDevice)]> = all_physical_devices
                 .into_iter()

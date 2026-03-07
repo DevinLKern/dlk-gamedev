@@ -24,7 +24,6 @@ use math::Vec3;
 use math::Vec4;
 use math::{Quat, Zero};
 
-
 #[allow(dead_code)]
 struct Application {
     mouse_sensitivity: f64,
@@ -49,6 +48,42 @@ struct Application {
     exiting: bool,
 }
 
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
+    _user_data: *mut std::os::raw::c_void,
+) -> vk::Bool32 {
+    let callback_data = unsafe { *p_callback_data };
+    let message_id_number = callback_data.message_id_number;
+
+    let message_id_name = if callback_data.p_message_id_name.is_null() {
+        std::borrow::Cow::from("")
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy() }
+    };
+
+    let message = if callback_data.p_message.is_null() {
+        std::borrow::Cow::from("")
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy() }
+    };
+
+    let message = format!("{message_type:?} [{message_id_name} ({message_id_number})] : {message}");
+
+    if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        tracing::error!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+        tracing::warn!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {
+        tracing::info!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE) {
+        tracing::trace!(message);
+    }
+
+    vk::FALSE
+}
+
 impl Application {
     fn new(
         img_path: &std::path::Path,
@@ -57,7 +92,7 @@ impl Application {
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
         let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
-        let device = vulkan::Device::new(instance)?;
+        let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
         let renderer = renderer::Renderer::new(device)?;
 
         let (model_vertex_buffers, model_transform) = {
@@ -71,7 +106,8 @@ impl Application {
 
                 for geo in obj.geometry.iter() {
                     for shape in geo.shapes.iter() {
-                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive {
+                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
+                        {
                             for v in [v1, v2, v3] {
                                 let position = [
                                     obj.vertices[v.0].x as f32,
@@ -141,7 +177,8 @@ impl Application {
                     )
                 };
 
-                let vb = renderer.create_vertex_buffer(data, verts.len() as u32)
+                let vb = renderer
+                    .create_vertex_buffer(data, verts.len() as u32)
                     .inspect_err(|e| tracing::error!("{e}"))?;
                 vertex_buffers.push(vb);
             }
@@ -195,7 +232,8 @@ impl Application {
                 )
             };
 
-            let vb = renderer.create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)
+            let vb = renderer
+                .create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)
                 .inspect_err(|e| tracing::error!("{e}"))?;
 
             Rc::new(vb)
@@ -229,7 +267,7 @@ impl Application {
             ),
             scalar: Vec3::new(20.0, 20.0, 20.0),
         };
-        
+
         Ok(Self {
             mouse_sensitivity: 0.001,
             focused_window: None,
@@ -327,11 +365,13 @@ impl Application {
                 }];
                 let camera_ubo_ptr = camera_ubo.as_ptr() as *const u8;
                 let current_buffer = context.get_current_per_frame_buffer();
-                self.renderer.update_uniform_buffer(
-                    camera_ubo_ptr,
-                    std::mem::size_of::<renderer::CameraUBO>(),
-                    current_buffer,
-                ).inspect_err(|e| tracing::error!("{e}"))?;
+                self.renderer
+                    .update_uniform_buffer(
+                        camera_ubo_ptr,
+                        std::mem::size_of::<renderer::CameraUBO>(),
+                        current_buffer,
+                    )
+                    .inspect_err(|e| tracing::error!("{e}"))?;
 
                 let current_ds = context.get_current_per_frame_descriptor_set();
                 let obj_ds = context.get_per_obj_descriptor_set();
@@ -352,11 +392,13 @@ impl Application {
                     flags: self.model_flags,
                 }];
                 let mesh_ubo_ptr = mesh_ubo.as_ptr() as *const u8;
-                self.renderer.update_dynamic_uniform_buffer(
-                    mesh_ubo_ptr,
-                    std::mem::size_of::<renderer::MeshUBO>(),
-                    &context.get_per_obj_dynamic_uniform_buffers()[1],
-                ).inspect_err(|e| tracing::error!("{e}"))?;
+                self.renderer
+                    .update_dynamic_uniform_buffer(
+                        mesh_ubo_ptr,
+                        std::mem::size_of::<renderer::MeshUBO>(),
+                        &context.get_per_obj_dynamic_uniform_buffers()[1],
+                    )
+                    .inspect_err(|e| tracing::error!("{e}"))?;
                 let model_vertex_buffers = self.model_vertex_buffers.clone();
                 // let model_index_buffer = self.model_index_buffer.clone();
 
@@ -378,7 +420,9 @@ impl Application {
                     }
                 };
                 unsafe {
-                    context.draw(record_draw_commands).inspect_err(|e| tracing::error!("{e}"))?;
+                    context
+                        .draw(record_draw_commands)
+                        .inspect_err(|e| tracing::error!("{e}"))?;
                 }
                 window.request_redraw();
             }
@@ -695,7 +739,7 @@ fn main() -> Result<()> {
         .with_file(true)
         .with_line_number(true)
         .init();
-    
+
     if std::env::args().len() != 2 && std::env::args().len() != 3 {
         println!("Invalid program arguments. Usage: dlk-gamedev [model_path]");
         return Err(Error::IncorrectProgramUsage);
@@ -705,7 +749,9 @@ fn main() -> Result<()> {
         let args: Vec<String> = std::env::args().collect();
         std::path::PathBuf::from(args[1].clone())
     };
-    let img_path = std::path::PathBuf::from("files").join("images").join("default.png");
+    let img_path = std::path::PathBuf::from("files")
+        .join("images")
+        .join("default.png");
 
     let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 
@@ -721,7 +767,9 @@ fn main() -> Result<()> {
         )?
     };
 
-    event_loop.run_app(&mut app).inspect_err(|e| tracing::error!("{e}"))?;
+    event_loop
+        .run_app(&mut app)
+        .inspect_err(|e| tracing::error!("{e}"))?;
 
     Ok(())
 }

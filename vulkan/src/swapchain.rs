@@ -79,8 +79,8 @@ impl Swapchain {
             unsafe { device.create_swapchain(&swapchain_create_info) }?
         };
 
-        let swapchain_images = unsafe { device.get_swapchain_images(swapchain) }?
-            .into_boxed_slice();
+        let swapchain_images =
+            unsafe { device.get_swapchain_images(swapchain) }?.into_boxed_slice();
 
         let mut views = Vec::with_capacity(swapchain_images.len());
         for image in swapchain_images.iter() {

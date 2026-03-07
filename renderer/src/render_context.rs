@@ -46,8 +46,8 @@ impl RenderContext {
             .map(|ds| Rc::new(ds))
             .collect();
 
-        let swapchain =
-            vulkan::Swapchain::new(device.clone(), window).inspect_err(|e| tracing::error!("{}", e))?;
+        let swapchain = vulkan::Swapchain::new(device.clone(), window)
+            .inspect_err(|e| tracing::error!("{}", e))?;
 
         let command_buffer_executed = {
             let mut fences: Vec<vk::Fence> = Vec::with_capacity(MAX_FRAME_COUNT);
@@ -215,10 +215,14 @@ impl RenderContext {
             let frag_entry_point_name =
                 std::ffi::CString::new(crate::ENTRY_POINT_NAME_SHADER_FRAG).unwrap();
 
-            let vert_shader_module =
-                vulkan::ShaderModule::new(&std::path::Path::new(crate::VERT_SHADER_PATH), device.clone())?;
-            let frag_shader_module =
-                vulkan::ShaderModule::new(&std::path::Path::new(crate::FRAG_SHADER_PATH), device.clone())?;
+            let vert_shader_module = vulkan::ShaderModule::new(
+                &std::path::Path::new(crate::VERT_SHADER_PATH),
+                device.clone(),
+            )?;
+            let frag_shader_module = vulkan::ShaderModule::new(
+                &std::path::Path::new(crate::FRAG_SHADER_PATH),
+                device.clone(),
+            )?;
 
             let stages = {
                 let vert_stage = vk::PipelineShaderStageCreateInfo {

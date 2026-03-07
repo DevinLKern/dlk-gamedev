@@ -40,10 +40,8 @@ impl Buffer {
         .ok_or(Error::CouldNotFindMemoryTypeIndex(
             create_info.memory_property_flags,
         ))
-        .inspect_err(|_| {
-            unsafe {
-                device.destroy_buffer(buffer);
-            }
+        .inspect_err(|_| unsafe {
+            device.destroy_buffer(buffer);
         })?;
 
         let allocate_info = vk::MemoryAllocateInfo {
@@ -51,19 +49,15 @@ impl Buffer {
             memory_type_index,
             ..Default::default()
         };
-        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| {
-            unsafe {
-                device.destroy_buffer(buffer);
-            }
+        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| unsafe {
+            device.destroy_buffer(buffer);
         })?;
 
         let offset = 0;
 
-        unsafe { device.bind_buffer_memory(buffer, memory, offset) }.inspect_err(|_| {
-            unsafe {
-                device.destroy_buffer(buffer);
-                device.free_memory(memory);
-            }
+        unsafe { device.bind_buffer_memory(buffer, memory, offset) }.inspect_err(|_| unsafe {
+            device.destroy_buffer(buffer);
+            device.free_memory(memory);
         })?;
 
         Ok(Buffer {

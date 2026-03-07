@@ -195,17 +195,13 @@ impl Image {
                 ..Default::default()
             }
         };
-        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| {
-            unsafe {
-                device.destroy_image(image);
-            }
+        let memory = unsafe { device.allocate_memory(&allocate_info) }.inspect_err(|_| unsafe {
+            device.destroy_image(image);
         })?;
 
-        unsafe { device.bind_image_memory(image, memory, 0) }.inspect_err(|_| {
-            unsafe {
-                device.free_memory(memory);
-                device.destroy_image(image);
-            }
+        unsafe { device.bind_image_memory(image, memory, 0) }.inspect_err(|_| unsafe {
+            device.free_memory(memory);
+            device.destroy_image(image);
         })?;
 
         let image_view =
