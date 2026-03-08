@@ -84,9 +84,10 @@ unsafe extern "system" fn vulkan_debug_callback(
     vk::FALSE
 }
 
+const DEFAULT_IMAGE: &[u8] = include_bytes!("../../files/images/default.png");
+
 impl Application {
     fn new(
-        img_path: &std::path::Path,
         model_path: &std::path::Path,
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
@@ -254,7 +255,8 @@ impl Application {
             )?
         };
         let image = {
-            let image_data = image::open(img_path)?;
+            let image_data =
+                image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
 
             renderer.create_image(image_data)?
         };
@@ -730,11 +732,11 @@ impl ApplicationHandler for Application {
 }
 
 fn main() -> Result<()> {
-    let file_appender = tracing_appender::rolling::daily("logs", "app.log");
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    // let file_appender = tracing_appender::rolling::daily("logs", "app.log");
+    // let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
 
     tracing_subscriber::fmt()
-        .with_writer(non_blocking)
+        //     .with_writer(non_blocking)
         .with_max_level(tracing::Level::DEBUG)
         .with_file(true)
         .with_line_number(true)
@@ -749,9 +751,6 @@ fn main() -> Result<()> {
         let args: Vec<String> = std::env::args().collect();
         std::path::PathBuf::from(args[1].clone())
     };
-    let img_path = std::path::PathBuf::from("files")
-        .join("images")
-        .join("default.png");
 
     let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 
@@ -759,12 +758,7 @@ fn main() -> Result<()> {
         let debug_enabled = cfg!(debug_assertions);
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(
-            img_path.as_path(),
-            model_path.as_path(),
-            debug_enabled,
-            &display_handle,
-        )?
+        Application::new(model_path.as_path(), debug_enabled, &display_handle)?
     };
 
     event_loop

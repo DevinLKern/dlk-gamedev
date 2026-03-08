@@ -153,6 +153,8 @@ fn generate_shader_paths(shader_paths_path: &PathBuf, paths: &[PathBuf]) -> Resu
             .expect(format!("No file extension for: {:?}", path).as_str())
             .to_ascii_uppercase();
 
+        writeln!(w, "#[allow(unused)]")?;
+
         writeln!(
             w,
             "const {}_{}_PATH: &str = \"{}/{}.spv\";",

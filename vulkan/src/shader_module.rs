@@ -10,7 +10,7 @@ pub struct ShaderModule {
 }
 
 impl ShaderModule {
-    pub fn new(
+    pub fn from_file(
         shader_path: &std::path::Path,
         device: crate::device::SharedDeviceRef,
     ) -> Result<ShaderModule> {
@@ -23,10 +23,17 @@ impl ShaderModule {
 
             data
         };
+
+        Self::from_compiled_spv(&shader_code, device)
+    }
+    pub fn from_compiled_spv(
+        compiled_spv: &[u8],
+        device: crate::device::SharedDeviceRef,
+    ) -> Result<ShaderModule> {
         let handle = {
             let shader_module_create_info = vk::ShaderModuleCreateInfo {
-                code_size: shader_code.len(),
-                p_code: shader_code.as_ptr() as *const u32,
+                code_size: compiled_spv.len(),
+                p_code: compiled_spv.as_ptr() as *const u32,
                 ..Default::default()
             };
 
@@ -35,7 +42,6 @@ impl ShaderModule {
 
         Ok(ShaderModule { handle, device })
     }
-
     pub unsafe fn raw(&self) -> &vk::ShaderModule {
         &self.handle
     }

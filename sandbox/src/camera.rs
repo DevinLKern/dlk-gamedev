@@ -60,7 +60,8 @@ impl Camera {
         self.transform.rotate_local(q_pitch);
     }
     pub fn look_at(&mut self, target: Vec3<f32>) {
-        // TODO: Double check math here
+        // TODO: Redo this funciton. It should be agnostic regarding what coordinate system is being used.
+        // Also, the math might be wrong.
         const LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.001;
 
         let dir = target.sub(self.transform.position).normalized();

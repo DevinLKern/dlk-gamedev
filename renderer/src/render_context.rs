@@ -215,14 +215,14 @@ impl RenderContext {
             let frag_entry_point_name =
                 std::ffi::CString::new(crate::ENTRY_POINT_NAME_SHADER_FRAG).unwrap();
 
-            let vert_shader_module = vulkan::ShaderModule::new(
-                &std::path::Path::new(crate::VERT_SHADER_PATH),
-                device.clone(),
-            )?;
-            let frag_shader_module = vulkan::ShaderModule::new(
-                &std::path::Path::new(crate::FRAG_SHADER_PATH),
-                device.clone(),
-            )?;
+            // TODO: convert crate::VERT_SHADER_PATH and crate::FRAG_SHADER_PATH into macros?
+            const COMPILED_VERT_SHADER: &[u8] = include_bytes!("../shaders/shader.vert.spv");
+            const COMPILED_FRAG_SHADER: &[u8] = include_bytes!("../shaders/shader.frag.spv");
+
+            let vert_shader_module =
+                vulkan::ShaderModule::from_compiled_spv(COMPILED_VERT_SHADER, device.clone())?;
+            let frag_shader_module =
+                vulkan::ShaderModule::from_compiled_spv(COMPILED_FRAG_SHADER, device.clone())?;
 
             let stages = {
                 let vert_stage = vk::PipelineShaderStageCreateInfo {
