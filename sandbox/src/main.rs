@@ -842,8 +842,6 @@ fn main() -> Result<()> {
         ),
     );
 
-    println!("{}", obj_to_world);
-
     let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 
     let mut app = {

@@ -519,7 +519,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "dlk-sandbox"
+name = "dlk-objviewer"
 version = "0.1.0"
 dependencies = [
  "ash",
