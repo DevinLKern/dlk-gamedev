@@ -88,6 +88,7 @@ const DEFAULT_IMAGE: &[u8] = include_bytes!("../../files/images/default.png");
 
 impl Application {
     fn new(
+        obj_to_world: math::Mat3<f32>,
         model_path: &std::path::Path,
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
@@ -110,11 +111,11 @@ impl Application {
                         if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
                         {
                             for v in [v1, v2, v3] {
-                                let position = [
+                                let position = obj_to_world.mul_vec(Vec3::new(
                                     obj.vertices[v.0].x as f32,
                                     obj.vertices[v.0].y as f32,
                                     obj.vertices[v.0].z as f32,
-                                ];
+                                )).into_arr();
                                 let tex_coord = if let Some(i) = v.1 {
                                     [obj.tex_vertices[i].u as f32, obj.tex_vertices[i].v as f32]
                                 } else {
@@ -742,9 +743,22 @@ fn main() -> Result<()> {
         .with_line_number(true)
         .init();
 
-    if std::env::args().len() != 2 && std::env::args().len() != 3 {
-        println!("Invalid program arguments. Usage: dlk-gamedev [model_path]");
+    let args: Box<[String]> = std::env::args().collect();
+
+    if args.len() < 2 {
+        println!("Invalid program arguments 0. Usage: dlk-gamedev <model> <options>");
+        println!("To view all options type dlk-gamedev --help");
         return Err(Error::IncorrectProgramUsage);
+    }
+
+    if args[1] == "--help" {
+        println!("Options:");
+        println!("    -f Specifies the forwards direction of the model. By default f is +z");
+        println!("        may be one of: <+x|-x|+y|-y|+z|-z>.");
+        println!("    -r Specifies the right direction of the model. By default r is +x");
+        println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
+        println!("    -u Specifies the up direction of the model. By default u is +y");
+        println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
     }
 
     let model_path = {
@@ -752,13 +766,91 @@ fn main() -> Result<()> {
         std::path::PathBuf::from(args[1].clone())
     };
 
+    let (obj_r, obj_u, obj_f) = {
+        let ri = args
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| if s == "-r" { Some(i) } else { None });
+        let ui = args
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| if s == "-u" { Some(i) } else { None });
+        let fi = args
+            .iter()
+            .enumerate()
+            .find_map(|(i, s)| if s == "-f" { Some(i) } else { None });
+
+        let rs = if let Some(i) = ri {
+            args.get(i + 1).map(|x| x.as_str())
+        } else {
+            Some("+x")
+        };
+        let us = if let Some(i) = ui {
+            args.get(i + 1).map(|x| x.as_str())
+        } else {
+            Some("+y")
+        };
+        let fs = if let Some(i) = fi {
+            args.get(i + 1).map(|x| x.as_str())
+        } else {
+            Some("+z")
+        };
+
+        let str_to_vec = |s: Option<&str>| -> Option<math::Vec3<f32>> {
+            match s {
+                Some("+x") => Some(Vec3::new(1.0, 0.0, 0.0)),
+                Some("-x") => Some(Vec3::new(-1.0, 0.0, 0.0)),
+                Some("+y") => Some(Vec3::new(0.0, 1.0, 0.0)),
+                Some("-y") => Some(Vec3::new(0.0, -1.0, 0.0)),
+                Some("+z") => Some(Vec3::new(0.0, 0.0, 1.0)),
+                Some("-z") => Some(Vec3::new(0.0, 0.0, -1.0)),
+                _ => None,
+            }
+        };
+
+        match (str_to_vec(rs), str_to_vec(us), str_to_vec(fs)) {
+            (Some(rv), Some(uv), Some(fv)) => (rv, uv, fv),
+            _ => {
+                println!("Invalid program arguments 1. Usage: dlk-gamedev <model> <options>");
+                println!("To view all options type dlk-gamedev --help");
+                return Err(Error::IncorrectProgramUsage);
+            }
+        }
+    };
+
+    if obj_r.dot(obj_u) != 0.0 || obj_r.dot(obj_f) != 0.0 || obj_u.dot(obj_f) != 0.0 {
+        println!("Invalid program arguments 2. Usage: dlk-gamedev <model> <options>");
+        println!("To view all options type dlk-gamedev --help");
+        return Err(Error::IncorrectProgramUsage);
+    }
+
+    let obj_to_world = math::Mat3::<f32>::from_cols(
+        math::Vec3::new(
+            obj_r.dot(WORLD_RIGHT),
+            obj_r.dot(WORLD_UP),
+            obj_r.dot(WORLD_FORWARDS)
+        ),
+        math::Vec3::new(
+            obj_u.dot(WORLD_RIGHT),
+            obj_u.dot(WORLD_UP),
+            obj_u.dot(WORLD_FORWARDS)
+        ),
+        math::Vec3::new(
+            obj_f.dot(WORLD_RIGHT),
+            obj_f.dot(WORLD_UP),
+            obj_f.dot(WORLD_FORWARDS)
+        ),
+    );
+
+    println!("{}", obj_to_world);
+
     let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 
     let mut app = {
         let debug_enabled = cfg!(debug_assertions);
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(model_path.as_path(), debug_enabled, &display_handle)?
+        Application::new(obj_to_world, model_path.as_path(), debug_enabled, &display_handle)?
     };
 
     event_loop

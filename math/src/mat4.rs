@@ -162,9 +162,9 @@ impl Mat4<f32> {
 impl<T: std::fmt::Display + Copy> std::fmt::Display for Mat4<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[")?;
-        write!(f, "{}", self.c0())?;
-        write!(f, "{}", self.c1())?;
-        write!(f, "{}", self.c2())?;
+        write!(f, "{}, ", self.c0())?;
+        write!(f, "{}, ", self.c1())?;
+        write!(f, "{}, ", self.c2())?;
         write!(f, "{}", self.c3())?;
         write!(f, "]")
     }
