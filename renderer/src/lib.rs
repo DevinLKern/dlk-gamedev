@@ -435,7 +435,7 @@ impl Renderer {
         index_type: vk::IndexType,
         index_count: u32,
         first_index: u32,
-    ) -> result::Result<Rc<vulkan::IndexBV>> {
+    ) -> result::Result<vulkan::IndexBV> {
         let buffer = {
             let buffer_create_info = vulkan::buffer::BufferCreateInfo {
                 size: data.len() as u64,
@@ -468,7 +468,7 @@ impl Renderer {
             index_type,
         };
 
-        Ok(Rc::new(view))
+        Ok(view)
     }
     pub fn create_uniform_buffers(
         &self,
