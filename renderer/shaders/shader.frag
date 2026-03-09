@@ -29,7 +29,7 @@ void main() {
     // This only works when the scale is uniform. Right now it is.
     vec3 normal_world_space = normalize(mat3(mesh.model) * v_normal);
     float light_intensity = world_light.ambient + max(0.0, dot(normal_world_space, -world_light.direction));
-
+ 
     if ((mesh.flags & MESH_FLAG_TEXTURED_BIT) != 0) {
         f_color = texture(tex_sampler, v_tex_coord) * light_intensity;
     } else {

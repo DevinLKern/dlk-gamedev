@@ -116,7 +116,7 @@ If your `.obj` files use a different coordinate system convention, you may want 
 -f +z -u +y -r +x
 ```
 
-to match your coordinate system.
+to match your coordinate system. If you don't want to derive missing normals just set --derive-normals to false. 
 
 ---
 

@@ -88,6 +88,7 @@ const DEFAULT_IMAGE: &[u8] = include_bytes!("../../files/images/default.png");
 
 impl Application {
     fn new(
+        derive_normals: bool,
         obj_to_world: math::Mat3<f32>,
         model_path: &std::path::Path,
         debug_enabled: bool,
@@ -113,6 +114,30 @@ impl Application {
                     for shape in geo.shapes.iter() {
                         if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
                         {
+                            let derived_normal = if derive_normals {
+                                match (v1.1, v2.1, v3.1) {
+                                    (None, None, None) => {
+                                        let p1 = obj.vertices[v1.0];
+                                        let p1 = Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32);
+                                        let p2 = obj.vertices[v2.0];
+                                        let p2 = Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32);
+                                        let p3 = obj.vertices[v3.0];
+                                        let p3 = Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32);
+
+                                        let face_normal = p1.sub(p2).cross(p2.sub(p3));
+
+                                        Some(obj_to_world.mul_vec(face_normal).into_arr())
+                                    }
+                                    _ => None,
+                                }
+                            } else {
+                                None
+                            };
+                            let derived_normal = match derived_normal {
+                                Some(n) => n,
+                                None => [0.0, 0.0, 0.0],
+                            };
+
                             for v in [v1, v2, v3] {
                                 let key = (v.0, v.1, v.2);
 
@@ -134,13 +159,15 @@ impl Application {
                                     };
 
                                     let normal = if let Some(i) = v.2 {
-                                        [
-                                            obj.normals[i].x as f32,
-                                            obj.normals[i].y as f32,
-                                            obj.normals[i].z as f32,
-                                        ]
+                                        obj_to_world
+                                            .mul_vec(Vec3::new(
+                                                obj.normals[i].x as f32,
+                                                obj.normals[i].y as f32,
+                                                obj.normals[i].z as f32,
+                                            ))
+                                            .into_arr()
                                     } else {
-                                        [0.0, 0.0, 0.0]
+                                        derived_normal
                                     };
 
                                     let vert = ShaderVertVertex {
@@ -212,12 +239,17 @@ impl Application {
                         )
                     };
 
-                    let ib = renderer.create_index_buffer(ib_data, vk::IndexType::UINT32, indices.len() as u32, 0)?;
+                    let ib = renderer.create_index_buffer(
+                        ib_data,
+                        vk::IndexType::UINT32,
+                        indices.len() as u32,
+                        0,
+                    )?;
 
                     vbs.push(vb);
                     ibs.push(ib);
                 }
-                
+
                 (vbs, ibs)
             };
 
@@ -291,7 +323,7 @@ impl Application {
         };
 
         let plane_index_buffer = Rc::new(plane_index_buffer);
-        
+
         let image = {
             let image_data =
                 image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
@@ -454,7 +486,7 @@ impl Application {
                     plane_index_buffer.draw(command_buffer);
 
                     obj_ds.bind(command_buffer, &model_dynamic_offset);
-                   
+
                     for (vb, ib) in model_vertex_buffers.iter().zip(model_index_buffers.iter()) {
                         vb.bind(command_buffer);
                         ib.bind(command_buffer);
@@ -792,17 +824,42 @@ fn main() -> Result<()> {
 
     if args[1] == "--help" {
         println!("Options:");
-        println!("    -f Specifies the forwards direction of the model. By default f is +z");
+        println!("    -f Specifies the forwards direction of the model. Defaults to +z.");
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>.");
-        println!("    -r Specifies the right direction of the model. By default r is +x");
+        println!("    -r Specifies the right direction of the model. Defaults to +x.");
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
-        println!("    -u Specifies the up direction of the model. By default u is +y");
+        println!("    -u Specifies the up direction of the model. Defaults to +y.");
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
+        println!("    --derive-normals normals to be derived when missing. Defaults to true.");
+        println!("        may be one onf of: <true|false>")
     }
 
     let model_path = {
         let args: Vec<String> = std::env::args().collect();
         std::path::PathBuf::from(args[1].clone())
+    };
+
+    let derive_normals = {
+        let idx = args.iter().enumerate().find_map(|(i, s)| {
+            if s == "--derive-normals" {
+                Some(i)
+            } else {
+                None
+            }
+        });
+        if let Some(i) = idx {
+            match args.get(i + 1).map(|x| x.as_str()) {
+                Some("true") => true,
+                Some("false") => false,
+                _ => {
+                    println!("Invalid program arguments 1. Usage: dlk-gamedev <model> <options>");
+                    println!("To view all options type dlk-gamedev --help");
+                    return Err(Error::IncorrectProgramUsage);
+                }
+            }
+        } else {
+            true
+        }
     };
 
     let (obj_r, obj_u, obj_f) = {
@@ -867,17 +924,17 @@ fn main() -> Result<()> {
         math::Vec3::new(
             obj_r.dot(WORLD_RIGHT),
             obj_r.dot(WORLD_UP),
-            obj_r.dot(WORLD_FORWARDS)
+            obj_r.dot(WORLD_FORWARDS),
         ),
         math::Vec3::new(
             obj_u.dot(WORLD_RIGHT),
             obj_u.dot(WORLD_UP),
-            obj_u.dot(WORLD_FORWARDS)
+            obj_u.dot(WORLD_FORWARDS),
         ),
         math::Vec3::new(
             obj_f.dot(WORLD_RIGHT),
             obj_f.dot(WORLD_UP),
-            obj_f.dot(WORLD_FORWARDS)
+            obj_f.dot(WORLD_FORWARDS),
         ),
     );
 
@@ -887,7 +944,13 @@ fn main() -> Result<()> {
         let debug_enabled = cfg!(debug_assertions);
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
-        Application::new(obj_to_world, model_path.as_path(), debug_enabled, &display_handle)?
+        Application::new(
+            derive_normals,
+            obj_to_world,
+            model_path.as_path(),
+            debug_enabled,
+            &display_handle,
+        )?
     };
 
     event_loop
