@@ -24,8 +24,14 @@ use math::Vec3;
 use math::Vec4;
 use math::{Quat, Zero};
 
+enum ApplicationState {
+    ObjectMode,
+    CameraMode,
+}
+
 #[allow(dead_code)]
 struct Application {
+    state: ApplicationState,
     mouse_sensitivity: f64,
     focused_window: Option<WindowId>,
     active_window: Option<WindowId>,
@@ -88,12 +94,15 @@ const DEFAULT_IMAGE: &[u8] = include_bytes!("../../files/images/default.png");
 
 impl Application {
     fn new(
+        mouse_sensitivity: f64,
         derive_normals: bool,
         obj_to_world: math::Mat3<f32>,
         model_path: &std::path::Path,
         debug_enabled: bool,
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
+        let state = ApplicationState::ObjectMode;
+        
         let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
         let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
         let renderer = renderer::Renderer::new(device)?;
@@ -338,7 +347,8 @@ impl Application {
         };
 
         Ok(Self {
-            mouse_sensitivity: 0.001,
+            state,
+            mouse_sensitivity,
             focused_window: None,
             active_window: None,
             renderer,
@@ -501,7 +511,6 @@ impl Application {
                 use winit::event::KeyEvent;
                 use winit::keyboard::KeyCode;
 
-                const ANGLE: f32 = 0.025;
                 const SPEED: f32 = 0.025;
                 match event {
                     KeyEvent { physical_key, .. } => match physical_key {
@@ -517,46 +526,40 @@ impl Application {
                                 window.set_cursor_visible(true);
                             }
                             KeyCode::KeyE => {
-                                camera.move_local(WORLD_FORWARDS.scaled(SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_FORWARDS.scaled(SPEED));
+                                }
                             }
                             KeyCode::KeyD => {
-                                camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
+                                }
                             }
                             KeyCode::KeyF => {
-                                camera.move_local(WORLD_RIGHT.scaled(SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_RIGHT.scaled(SPEED));
+                                }
                             }
                             KeyCode::KeyS => {
-                                camera.move_local(WORLD_RIGHT.scaled(-SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_RIGHT.scaled(-SPEED));
+                                }
                             }
                             KeyCode::Space => {
-                                camera.move_global(WORLD_UP.scaled(SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_UP.scaled(SPEED));
+                                }
                             }
                             KeyCode::ControlLeft => {
-                                camera.move_global(WORLD_UP.scaled(-SPEED));
+                                if let ApplicationState::CameraMode = self.state {
+                                    camera.move_local(WORLD_UP.scaled(-SPEED));
+                                }
                             }
-                            KeyCode::ArrowUp => {
-                                self.model_transform.rotate_global(
-                                    Quat::unit_from_angle_axis(ANGLE, WORLD_RIGHT),
-                                    self.model_transform.position,
-                                );
+                            KeyCode::KeyO => {
+                                self.state = ApplicationState::ObjectMode;
                             }
-                            KeyCode::ArrowDown => {
-                                self.model_transform.rotate_global(
-                                    Quat::unit_from_angle_axis(-ANGLE, WORLD_RIGHT),
-                                    self.model_transform.position,
-                                );
-                            }
-                            KeyCode::ArrowLeft => {
-                                self.model_transform.rotate_global(
-                                    Quat::unit_from_angle_axis(-ANGLE, WORLD_UP),
-                                    self.model_transform.position,
-                                );
-                            }
-                            KeyCode::ArrowRight => {
-                                self.model_transform.rotate_global(
-                                    Quat::unit_from_angle_axis(ANGLE, WORLD_UP),
-                                    self.model_transform.position,
-                                );
+                            KeyCode::KeyC => {
+                                self.state = ApplicationState::CameraMode;
                             }
                             _ => {}
                         },
@@ -591,68 +594,8 @@ impl Application {
                     _ => {}
                 }
             }
-            WindowEvent::CursorMoved { .. } => {
-                // tracing::trace!("Cursor Moved!: {} {}", position.x, position.y);
-            }
-            WindowEvent::AxisMotion { .. } => {
-                // println!("AxisMotion");
-            }
-            WindowEvent::ActivationTokenDone { .. } => {
-                // tracing::info!("Activation Token Done");
-            }
-            WindowEvent::CursorLeft { .. } => {
-                // println!("CursorLeft!");
-            }
-            WindowEvent::MouseWheel { .. } => {
-                // println!("MouseWheel!");
-            }
-            WindowEvent::Occluded(_) => {
-                // println!("Occluded!");
-            }
-            WindowEvent::DroppedFile(_) => {
-                // println!("Dropped file!");
-            }
-            WindowEvent::HoveredFile(_) => {
-                // println!("HoveredFile");
-            }
-            WindowEvent::Ime(_) => {
-                // println!("Ime!");
-            }
-            WindowEvent::CursorEntered { .. } => {
-                // println!("CursorEntered");
-            }
-            WindowEvent::Destroyed { .. } => {
-                // tracing::trace!("Destroyed!");
-            }
-            WindowEvent::HoveredFileCancelled => {
-                // tracing::info!("HoveredFileCancelled");
-            }
-            WindowEvent::ModifiersChanged(_) => {
-                // println!("ModifiersChanged");
-            }
-            WindowEvent::TouchpadPressure { .. } => {
-                // println!("TouchpadPressure");
-            }
-            WindowEvent::PinchGesture { .. } => {
-                // println!("PinchGesture");
-            }
-            WindowEvent::DoubleTapGesture { .. } => {
-                // println!("DoubleTapGesture");
-            }
-            WindowEvent::PanGesture { .. } => {
-                // println!("PanGesture");
-            }
-            WindowEvent::RotationGesture { .. } => {
-                // println!("RotationGesture");
-            }
-            WindowEvent::Touch(_) => {
-                // println!("Touch");
-            }
-            WindowEvent::ScaleFactorChanged { .. } => {
-                // println!("ScaleFactorChanged");
-            }
-            WindowEvent::ThemeChanged(_) => {
-                // println!("ThemeChanged");
+            _ => {
+                //
             }
         }
 
@@ -665,14 +608,11 @@ impl ApplicationHandler for Application {
             return;
         }
 
-        // tracing::trace!("Exiting!");
         self.exiting = true;
 
         return event_loop.exit();
     }
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // tracing::trace!("Resumed!");
-
         if !self.windows.is_empty() {
             return;
         }
@@ -763,15 +703,35 @@ impl ApplicationHandler for Application {
                 return;
             }
         };
-        match event {
-            DeviceEvent::MouseMotion { delta } => {
-                let dx = delta.0 * self.mouse_sensitivity;
-                let dy = -delta.1 * self.mouse_sensitivity;
+        match self.state {
+            ApplicationState::CameraMode => {
+                match event {
+                    DeviceEvent::MouseMotion { delta } => {
+                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dy = -delta.1 * self.mouse_sensitivity;
 
-                camera.rotate(dx as f32, dy as f32);
+                        camera.rotate(dx as f32, dy as f32);
+                    }
+                    _ => {
+                        // tracing::info!("Not implemented")
+                    }
+                }
             }
-            _ => {
-                // tracing::info!("Not implemented")
+            ApplicationState::ObjectMode => {
+                match event {
+                    DeviceEvent::MouseMotion { delta } => {
+                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dy = -delta.1 * self.mouse_sensitivity;
+
+                        let qx = Quat::unit_from_angle_axis(dx as f32, WORLD_UP);
+                        let qy = Quat::unit_from_angle_axis(dy as f32, WORLD_RIGHT);
+
+                        self.model_transform.rotate_global(qx.mul(qy), self.model_transform.position);
+                    }
+                    _ => {
+                        // tracing::info!("Not implemented")
+                    }
+                }
             }
         }
     }
@@ -824,7 +784,7 @@ fn main() -> Result<()> {
         return print_usage();
     }
 
-    if args[1] == "--help" {
+    if let Some(_) = args.iter().find(|s| s.as_str() == "--help") {
         println!("Options:");
         println!("    -f Specifies the forwards direction of the model. Defaults to +z.");
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>.");
@@ -834,6 +794,8 @@ fn main() -> Result<()> {
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
         println!("    --derive-normals normals to be derived when missing. Defaults to true.");
         println!("        may be one of of: <true|false>");
+        println!("    --mouse-sensitivity Specifies the sensitivity of the mouse. Defaults to 50.0");
+        println!("        may be any value from 1 to 100");
 
         return Ok(())
     }
@@ -841,6 +803,38 @@ fn main() -> Result<()> {
     let model_path = {
         let args: Vec<String> = std::env::args().collect();
         std::path::PathBuf::from(args[1].clone())
+    };
+
+    let mouse_sensitivity = {
+        let idx = args.iter().enumerate().find_map(|(i, s)| {
+            if s == "--mouse-sensitivity" {
+                Some(i)
+            } else {
+                None
+            }
+        });
+
+        let sensitivity = if let Some(i) = idx {
+            if let Some(s) = args.get(i + 1) {
+                if let Ok(ms) = s.parse::<f64>() {
+                    ms
+                } else {
+                    println!("Error: {} is not a valid mouse sensitivity.", s);
+                    return Ok(());
+                }
+            } else {
+                println!("Eror: Could not get mouse sentitivy. Terminating program.");
+                return Ok(());
+            }
+        } else {
+            50.0
+        };
+
+        if sensitivity < 1.0 || 100.0 < sensitivity {
+            println!("Warning: Sensitivity should be set to a value between 1 and 100.");
+        }
+
+        sensitivity / 50000.0
     };
 
     let derive_normals = {
@@ -945,6 +939,7 @@ fn main() -> Result<()> {
         let owned_display_handle = event_loop.owned_display_handle();
         let display_handle = owned_display_handle.display_handle()?;
         Application::new(
+            mouse_sensitivity,
             derive_normals,
             obj_to_world,
             model_path.as_path(),

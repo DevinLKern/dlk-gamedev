@@ -24,6 +24,7 @@ impl Default for Camera {
     }
 }
 
+#[allow(dead_code)]
 impl Camera {
     pub fn new(fov_y: f32, aspect_ratio: f32, position: Vec3<f32>, yaw: f32, pitch: f32) -> Self {
         let transform = RigidTransform::new(
