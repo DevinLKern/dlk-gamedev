@@ -207,12 +207,12 @@ impl<T> Mat3<T>
 where
     T: Zero + One + Copy,
 {
-    pub const fn into_mat4(self) -> crate::mat4::Mat4<T> {
+    pub const fn into_mat4(self, v: T) -> crate::mat4::Mat4<T> {
         crate::mat4::Mat4::from_rows(
             self.r0().into_vec4(),
             self.r1().into_vec4(),
             self.r2().into_vec4(),
-            Vec4::ZERO,
+            Vec4::new(T::ZERO, T::ZERO, T::ZERO, v),
         )
     }
 }

@@ -257,35 +257,35 @@ impl Application {
         };
 
         const PLANE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 4] = {
-            const T: Vec3<f32> = WORLD_UP;
-            const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_UP);
+            const F: Vec3<f32> = WORLD_FORWARDS;
+            const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_FORWARDS);
             const R: Vec3<f32> = WORLD_RIGHT;
             const L: Vec3<f32> = Vec3::ZERO.sub(WORLD_RIGHT);
 
-            const TR: Vec3<f32> = T.add(R);
-            const TL: Vec3<f32> = T.add(L);
+            const FR: Vec3<f32> = F.add(R);
+            const FL: Vec3<f32> = F.add(L);
             const BR: Vec3<f32> = B.add(R);
             const BL: Vec3<f32> = B.add(L);
             [
                 renderer::ShaderVertVertex {
-                    position: TL.into_arr(),
+                    position: FL.into_arr(),
                     tex_coord: [1.0, 0.0],
-                    normal: WORLD_FORWARDS.into_arr(),
+                    normal: WORLD_UP.into_arr(),
                 },
                 renderer::ShaderVertVertex {
-                    position: TR.into_arr(),
+                    position: FR.into_arr(),
                     tex_coord: [0.0, 0.0],
-                    normal: WORLD_FORWARDS.into_arr(),
+                    normal: WORLD_UP.into_arr(),
                 },
                 renderer::ShaderVertVertex {
                     position: BR.into_arr(),
                     tex_coord: [0.0, 1.0],
-                    normal: WORLD_FORWARDS.into_arr(),
+                    normal: WORLD_UP.into_arr(),
                 },
                 renderer::ShaderVertVertex {
                     position: BL.into_arr(),
                     tex_coord: [1.0, 1.0],
-                    normal: WORLD_FORWARDS.into_arr(),
+                    normal: WORLD_UP.into_arr(),
                 },
             ]
         };
@@ -333,11 +333,8 @@ impl Application {
 
         let plane_transform = math::AffineTransform {
             position: model_transform.position.add(Vec3::ZERO.sub(WORLD_UP)),
-            orientation: math::Quat::unit_from_angle_axis(
-                std::f32::consts::FRAC_PI_2,
-                WORLD_RIGHT,
-            ),
-            scalar: Vec3::new(20.0, 20.0, 20.0),
+            orientation: math::Quat::IDENTITY,
+            scalar: Vec3::new(10.0, 10.0, 10.0),
         };
 
         Ok(Self {
@@ -922,23 +919,24 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
-    let obj_to_world = math::Mat3::<f32>::from_cols(
-        math::Vec3::new(
-            obj_r.dot(WORLD_RIGHT),
-            obj_r.dot(WORLD_UP),
-            obj_r.dot(WORLD_FORWARDS),
-        ),
-        math::Vec3::new(
-            obj_u.dot(WORLD_RIGHT),
-            obj_u.dot(WORLD_UP),
-            obj_u.dot(WORLD_FORWARDS),
-        ),
-        math::Vec3::new(
-            obj_f.dot(WORLD_RIGHT),
-            obj_f.dot(WORLD_UP),
-            obj_f.dot(WORLD_FORWARDS),
-        ),
-    );
+    let obj_to_world = {
+        let to_obj = math::Mat3::<f32>::from_cols(
+            obj_r,
+            obj_u,
+            obj_f,
+        );
+
+        // The transpose is equivalent to the inverse of a matrix when the matrix is orthonormal.
+        let from_obj = to_obj.transposed();
+
+        const INTO_WORLD: math::Mat3<f32> = math::Mat3::from_cols(
+            WORLD_RIGHT,
+            WORLD_UP,
+            WORLD_FORWARDS,
+        );
+
+        from_obj.mul(&INTO_WORLD)
+    };
 
     let event_loop = EventLoop::new().inspect_err(|e| tracing::error!("{e}"))?;
 

@@ -1,6 +1,5 @@
 use crate::traits::{Identity, One, Zero};
 use crate::vec2::Vec2;
-use crate::vec3::Vec3;
 
 #[allow(dead_code)]
 #[repr(transparent)]

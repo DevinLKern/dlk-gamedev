@@ -111,9 +111,7 @@ impl Quat {
     }
     #[inline]
     pub const fn into_mat4(self) -> Mat4<f32> {
-        let mut res = self.into_mat3().into_mat4();
-        *res.c3_mut().w_mut() = 1.0;
-        return res;
+        self.into_mat3().into_mat4(1.0)
     }
     #[inline]
     pub const fn as_mat4(&self) -> Mat4<f32> {

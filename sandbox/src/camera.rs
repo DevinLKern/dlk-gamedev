@@ -94,27 +94,23 @@ impl Camera {
     }
     #[inline]
     pub fn get_projection_matrix(&self) -> Mat4<f32> {
-        const WORLD_TO_VK: Mat4<f32> = Mat4::from_cols(
-            Vec4::new(
-                WORLD_RIGHT.dot(vulkan::VK_DIR_RIGHT),
-                WORLD_RIGHT.dot(vulkan::VK_DIR_UP),
-                WORLD_RIGHT.dot(vulkan::VK_DIR_FORWARDS),
-                0.0,
-            ),
-            Vec4::new(
-                WORLD_UP.dot(vulkan::VK_DIR_RIGHT),
-                WORLD_UP.dot(vulkan::VK_DIR_UP),
-                WORLD_UP.dot(vulkan::VK_DIR_FORWARDS),
-                0.0,
-            ),
-            Vec4::new(
-                WORLD_FORWARDS.dot(vulkan::VK_DIR_RIGHT),
-                WORLD_FORWARDS.dot(vulkan::VK_DIR_UP),
-                WORLD_FORWARDS.dot(vulkan::VK_DIR_FORWARDS),
-                0.0,
-            ),
-            Vec4::new(0.0, 0.0, 0.0, 1.0),
-        );
+        const WORLD_TO_VK: Mat4<f32> = {
+            use math::Mat3;
+            
+            const FROM_WORLD: Mat3<f32> = Mat3::from_rows(
+                WORLD_RIGHT,
+                WORLD_UP,
+                WORLD_FORWARDS,
+            );
+
+            const TO_VK: Mat3<f32> = Mat3::from_cols(
+                vulkan::VK_DIR_RIGHT,
+                vulkan::VK_DIR_UP,
+                vulkan::VK_DIR_FORWARDS,
+            );
+
+            FROM_WORLD.mul(&TO_VK).into_mat4(1.0)
+        };
 
         let n = self.near;
         let f = self.far;
