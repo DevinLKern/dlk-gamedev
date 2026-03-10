@@ -577,19 +577,41 @@ impl Application {
                 }
                 // tracing::trace!("Focused!");
             }
-            WindowEvent::MouseInput { button, .. } => {
+            WindowEvent::MouseInput { button, state, .. } => {
+                match state {
+                    winit::event::ElementState::Released => {
+                        return Ok(false);
+                    }
+                    _ => {
+                        //
+                    }
+                }
                 use winit::event::MouseButton;
 
                 // tracing::trace!("Mouse Input!");
                 match button {
                     MouseButton::Left => {
-                        self.active_window = self.focused_window;
-                        window
-                            .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                            .or_else(|_| {
-                                window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                            }).inspect_err(|e| tracing::error!("{e}"))?;
-                        window.set_cursor_visible(false);
+                        match self.active_window {
+                            None => {
+                                self.active_window = self.focused_window;
+                                window
+                                    .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                    .or_else(|_| {
+                                        window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                    }).inspect_err(|e| tracing::error!("{e}"))?;
+                                window.set_cursor_visible(false);
+                            }
+                            Some(_) => {
+                                self.active_window = None;
+                                match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
+                                    Err(e) => {
+                                        tracing::error!("{}", e);
+                                    }
+                                    _ => {}
+                                }
+                                window.set_cursor_visible(true);
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -802,7 +824,7 @@ fn main() -> Result<()> {
 
     let model_path = {
         let args: Vec<String> = std::env::args().collect();
-        std::path::PathBuf::from(args[1].clone())
+        std::path::PathBuf::from(args[args.len() - 1].clone())
     };
 
     let mouse_sensitivity = {

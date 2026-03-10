@@ -129,7 +129,7 @@ While in camera mode, moving your mouse will rotate the camera.
 While in object mode, moving your mouse will rotate the object.
 
 Click on the application window to grab the mouse for rotations.
-Press escape to free the mouse.
+Click again or press escape to free the mouse.
 
 E, S, D, F, SPACE, and CTRL will move the camera while in camera mode.
 
