@@ -116,7 +116,22 @@ If your `.obj` files use a different coordinate system convention, you may want 
 -f +z -u +y -r +x
 ```
 
-to match your coordinate system. If you don't want to derive missing normals just set --derive-normals to false. 
+to match your coordinate system. 
+If you don't want to derive missing normals just set --derive-normals to false. 
+If you want to set the mouse sensitivity just set --mouse-sensitivity to whatever you prefer. 
+
+---
+
+## Controls
+
+Press 'o' to enter object mode and 'c' to enter camera mode.
+While in camera mode, moving your mouse will rotate the camera.
+While in object mode, moving your mouse will rotate the object.
+
+Click on the application window to grab the mouse for rotations.
+Press escape to free the mouse.
+
+E, S, D, F, SPACE, and CTRL will move the camera while in camera mode.
 
 ---
 
