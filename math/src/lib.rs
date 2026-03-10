@@ -1,4 +1,5 @@
 mod affine_transform;
+mod mat2;
 mod mat3;
 mod mat4;
 mod quat;
@@ -9,6 +10,7 @@ mod vec3;
 mod vec4;
 
 pub use affine_transform::AffineTransform;
+pub use mat2::Mat2;
 pub use mat3::Mat3;
 pub use mat4::Mat4;
 pub use quat::Quat;

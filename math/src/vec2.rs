@@ -102,7 +102,7 @@ impl Vec2<f32> {
         *self.y_mut() -= other.y();
     }
     #[inline]
-    pub const fn dot(&self, other: &Self) -> f32 {
+    pub const fn dot(&self, other: Self) -> f32 {
         self.x() * other.x() + self.y() * other.y()
     }
 }
@@ -124,7 +124,7 @@ impl<T: PartialEq + Copy> PartialEq for Vec2<T> {
 
 #[cfg(test)]
 mod tests {
-    use crate::vec2::Vec2;
+    use crate::Vec2;
 
     #[test]
     fn add1() {
@@ -165,7 +165,7 @@ mod tests {
         let b = Vec2::<f32>::new(17.0, 65.0);
         let c: f32 = 342.0;
 
-        assert_eq!(a.dot(&b), c);
+        assert_eq!(a.dot(b), c);
     }
 
     #[test]

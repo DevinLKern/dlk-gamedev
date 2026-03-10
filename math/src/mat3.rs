@@ -1,6 +1,6 @@
 use crate::traits::{Identity, One, Zero};
-use crate::vec3::Vec3;
-use crate::vec4::Vec4;
+use crate::Vec3;
+use crate::Vec4;
 
 #[allow(dead_code)]
 #[repr(transparent)]
@@ -118,13 +118,77 @@ impl Mat3<f32> {
     pub const fn transposed(&self) -> Self {
         Self::from_rows(self.c0(), self.c1(), self.c2())
     }
+    #[inline]
+    pub const fn adjoint(&self) -> Self {
+        let a = self.c0().x();
+        let b = self.c1().x();
+        let c = self.c2().x();
+
+        let d = self.c0().y();
+        let e = self.c1().y();
+        let f = self.c2().y();
+
+        let g = self.c0().z();
+        let h = self.c1().z();
+        let i = self.c2().z();
+
+        let c0 = Vec3::new(
+            e * i - f * h,
+            f * g - d * i,
+            d * h - e * g,
+        );
+
+        let c1 = Vec3::new(
+            c * h - b * i,
+            a * i - c * g,
+            b * g - a * h,
+        );
+
+        let c2 = Vec3::new(
+            b * f - c * e,
+            c * d - a * f,
+            a * e - b * d,
+        );
+
+        Self::from_cols(c0, c1, c2)
+    }
+    pub const fn determinant(&self) -> f32 {
+        let a = self.c0().x();
+        let b = self.c0().y();
+        let c = self.c0().z();
+
+        let d = self.c1().x();
+        let e = self.c1().y();
+        let f = self.c1().z();
+
+        let g = self.c2().x();
+        let h = self.c2().y();
+        let i = self.c2().z();
+
+        (a * (e * i - f * h)) - (b * (d * i - g * f)) + (c * (d * h - e * g))
+    }
+    #[inline]
+    pub const fn inverse(&self) -> Option<Self> {
+        let mut adj = self.adjoint();
+        let det = self.determinant();
+        if det == 0.0 {
+            return None;
+        }
+        let s = 1.0 / det;
+        
+        adj.c0_mut().scale_assign(s);
+        adj.c1_mut().scale_assign(s);
+        adj.c2_mut().scale_assign(s);
+
+        Some(adj)
+    }
 }
 
 impl<T: std::fmt::Display + Copy> std::fmt::Display for Mat3<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "[")?;
-        write!(f, "{}", self.c0())?;
-        write!(f, "{}", self.c1())?;
+        write!(f, "{}, ", self.c0())?;
+        write!(f, "{}, ", self.c1())?;
         write!(f, "{}", self.c2())?;
         write!(f, "]")
     }
@@ -207,5 +271,66 @@ mod test {
         );
 
         assert_eq!(result, expected);
+    }
+    #[test]
+    fn determinant() {
+        let a = Mat3::from_rows(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(4.0, 5.0, 6.0),
+            Vec3::new(7.0, 8.0, 9.0),
+        );
+
+        assert_eq!(a.determinant(), 0.0);
+
+        let b = Mat3::from_rows(
+            Vec3::new(1.0, 3.0, 1.0),
+            Vec3::new(0.0, 3.0, 1.0),
+            Vec3::new(4.0, 2.0, 0.0),
+        );
+
+        assert_eq!(b.determinant(), -2.0);
+    }
+    #[test]
+    fn adjoint() {
+        let a = Mat3::from_rows(
+            Vec3::new(1.0, 3.0, 1.0),
+            Vec3::new(0.0, 3.0, 1.0),
+            Vec3::new(4.0, 2.0, 0.0),
+        );
+
+        let r1 = Mat3::from_rows(
+            Vec3::new(-2.0, 2.0, 0.0),
+            Vec3::new(4.0, -4.0, -1.0),
+            Vec3::new(-12.0, 10.0, 3.0)
+        );
+
+        assert_eq!(a.adjoint(), r1);
+    }
+    #[test]
+    fn inverse() {
+        let a = Mat3::from_rows(
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(4.0, 5.0, 6.0),
+            Vec3::new(7.0, 8.0, 9.0),
+        );
+        let b = Mat3::from_rows(
+            Vec3::new(1.0, 3.0, 1.0),
+            Vec3::new(0.0, 3.0, 1.0),
+            Vec3::new(4.0, 2.0, 0.0),
+        );
+        let c = Mat3::from_rows(
+            Vec3::new(19.0, 20.0, 21.0),
+            Vec3::new(22.0, 23.0, 24.0),
+            Vec3::new(25.0, 26.0, 27.0),
+        );
+
+        assert_eq!(a.inverse(), None);
+
+        let r2 = Mat3::from_rows(
+            Vec3::new(1.0, -1.0, 0.0),
+            Vec3::new(-2.0, 2.0, 0.5),
+            Vec3::new(6.0, -5.0, -1.5)
+        );
+        assert_eq!(b.inverse(), Some(r2));
     }
 }

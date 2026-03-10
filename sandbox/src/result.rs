@@ -1,6 +1,5 @@
 #[derive(Debug)]
 pub enum Error {
-    IncorrectProgramUsage,
     IoError(std::io::Error),
     WinitExternalError(winit::error::ExternalError),
     WinitEventLoopError(winit::error::EventLoopError),
@@ -15,9 +14,6 @@ pub enum Error {
 impl std::fmt::Display for Error {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::IncorrectProgramUsage => {
-                write!(f, "Incorrect usage. Expects: [working_directory] [image]")
-            }
             Self::IoError(e) => write!(f, "IoError: {}", e),
             Self::WinitExternalError(e) => write!(f, "ExternalError({})", e),
             Self::WinitEventLoopError(e) => write!(f, "EventLoopError({})", e),

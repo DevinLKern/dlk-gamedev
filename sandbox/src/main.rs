@@ -124,7 +124,7 @@ impl Application {
                                         let p3 = obj.vertices[v3.0];
                                         let p3 = Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32);
 
-                                        let face_normal = p1.sub(p2).cross(p2.sub(p3));
+                                        let face_normal = p2.sub(p3).cross(p3.sub(p1));
 
                                         Some(obj_to_world.mul_vec(face_normal).into_arr())
                                     }
@@ -319,7 +319,7 @@ impl Application {
                 vk::IndexType::UINT32,
                 PLANE_INDEX_BUFFER_DATA.len() as u32,
                 0,
-            )?
+            ).inspect_err(|e| tracing::error!("{e}"))?
         };
 
         let plane_index_buffer = Rc::new(plane_index_buffer);
@@ -328,13 +328,13 @@ impl Application {
             let image_data =
                 image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
 
-            renderer.create_image(image_data)?
+            renderer.create_image(image_data).inspect_err(|e| tracing::error!("{e}"))?
         };
 
         let plane_transform = math::AffineTransform {
             position: model_transform.position.add(Vec3::ZERO.sub(WORLD_UP)),
             orientation: math::Quat::unit_from_angle_axis(
-                -std::f32::consts::FRAC_PI_2,
+                std::f32::consts::FRAC_PI_2,
                 WORLD_RIGHT,
             ),
             scalar: Vec3::new(20.0, 20.0, 20.0),
@@ -423,7 +423,7 @@ impl Application {
                     &light_ubo,
                     window,
                     self.image.clone(),
-                )?;
+                ).inspect_err(|e| tracing::error!("{e}"))?;
 
                 *context = new_context;
             }
@@ -588,7 +588,7 @@ impl Application {
                             .set_cursor_grab(winit::window::CursorGrabMode::Locked)
                             .or_else(|_| {
                                 window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                            })?;
+                            }).inspect_err(|e| tracing::error!("{e}"))?;
                         window.set_cursor_visible(false);
                     }
                     _ => {}
@@ -816,10 +816,15 @@ fn main() -> Result<()> {
 
     let args: Box<[String]> = std::env::args().collect();
 
+    let print_usage = || -> Result<()> {
+        let name = format!("{}", std::env::current_exe()?.file_name().unwrap().display());
+        println!("Invalid program arguments. Usage: {} <model> <options>", name);
+        println!("To view all options type {} --help", name);
+        return Ok(());
+    };
+
     if args.len() < 2 {
-        println!("Invalid program arguments 0. Usage: dlk-gamedev <model> <options>");
-        println!("To view all options type dlk-gamedev --help");
-        return Err(Error::IncorrectProgramUsage);
+        return print_usage();
     }
 
     if args[1] == "--help" {
@@ -831,7 +836,9 @@ fn main() -> Result<()> {
         println!("    -u Specifies the up direction of the model. Defaults to +y.");
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
         println!("    --derive-normals normals to be derived when missing. Defaults to true.");
-        println!("        may be one onf of: <true|false>")
+        println!("        may be one of of: <true|false>");
+
+        return Ok(())
     }
 
     let model_path = {
@@ -852,9 +859,7 @@ fn main() -> Result<()> {
                 Some("true") => true,
                 Some("false") => false,
                 _ => {
-                    println!("Invalid program arguments 1. Usage: dlk-gamedev <model> <options>");
-                    println!("To view all options type dlk-gamedev --help");
-                    return Err(Error::IncorrectProgramUsage);
+                    return print_usage();
                 }
             }
         } else {
@@ -907,17 +912,14 @@ fn main() -> Result<()> {
         match (str_to_vec(rs), str_to_vec(us), str_to_vec(fs)) {
             (Some(rv), Some(uv), Some(fv)) => (rv, uv, fv),
             _ => {
-                println!("Invalid program arguments 1. Usage: dlk-gamedev <model> <options>");
-                println!("To view all options type dlk-gamedev --help");
-                return Err(Error::IncorrectProgramUsage);
+                return print_usage();
             }
         }
     };
 
-    if obj_r.dot(obj_u) != 0.0 || obj_r.dot(obj_f) != 0.0 || obj_u.dot(obj_f) != 0.0 {
-        println!("Invalid program arguments 2. Usage: dlk-gamedev <model> <options>");
-        println!("To view all options type dlk-gamedev --help");
-        return Err(Error::IncorrectProgramUsage);
+    if obj_r.cross(obj_u) != obj_f && obj_u.cross(obj_r) != obj_f {
+        println!("Invalid input. Right, left, and up must form a valid coordinate system.");
+        return Ok(());
     }
 
     let obj_to_world = math::Mat3::<f32>::from_cols(
