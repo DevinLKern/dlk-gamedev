@@ -104,7 +104,7 @@ With the following contents:
 [Nemo Action]
 Name=View obj model
 Comment=Open obj model with dlk-objviewer
-Exec=dlk-objviewer %F -f +z -u +y -r +x
+Exec=dlk-objviewer -f +z -u +y -r +x %F
 Icon-Name=applications-graphics
 Selection=s
 Extensions=obj;
