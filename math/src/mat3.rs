@@ -1,6 +1,6 @@
-use crate::traits::{Identity, One, Zero};
 use crate::Vec3;
 use crate::Vec4;
+use crate::traits::{Identity, One, Zero};
 
 #[allow(dead_code)]
 #[repr(transparent)]
@@ -132,23 +132,11 @@ impl Mat3<f32> {
         let h = self.c1().z();
         let i = self.c2().z();
 
-        let c0 = Vec3::new(
-            e * i - f * h,
-            f * g - d * i,
-            d * h - e * g,
-        );
+        let c0 = Vec3::new(e * i - f * h, f * g - d * i, d * h - e * g);
 
-        let c1 = Vec3::new(
-            c * h - b * i,
-            a * i - c * g,
-            b * g - a * h,
-        );
+        let c1 = Vec3::new(c * h - b * i, a * i - c * g, b * g - a * h);
 
-        let c2 = Vec3::new(
-            b * f - c * e,
-            c * d - a * f,
-            a * e - b * d,
-        );
+        let c2 = Vec3::new(b * f - c * e, c * d - a * f, a * e - b * d);
 
         Self::from_cols(c0, c1, c2)
     }
@@ -175,7 +163,7 @@ impl Mat3<f32> {
             return None;
         }
         let s = 1.0 / det;
-        
+
         adj.c0_mut().scale_assign(s);
         adj.c1_mut().scale_assign(s);
         adj.c2_mut().scale_assign(s);
@@ -301,7 +289,7 @@ mod test {
         let r1 = Mat3::from_rows(
             Vec3::new(-2.0, 2.0, 0.0),
             Vec3::new(4.0, -4.0, -1.0),
-            Vec3::new(-12.0, 10.0, 3.0)
+            Vec3::new(-12.0, 10.0, 3.0),
         );
 
         assert_eq!(a.adjoint(), r1);
@@ -329,7 +317,7 @@ mod test {
         let r2 = Mat3::from_rows(
             Vec3::new(1.0, -1.0, 0.0),
             Vec3::new(-2.0, 2.0, 0.5),
-            Vec3::new(6.0, -5.0, -1.5)
+            Vec3::new(6.0, -5.0, -1.5),
         );
         assert_eq!(b.inverse(), Some(r2));
     }

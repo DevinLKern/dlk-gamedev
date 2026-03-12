@@ -1,5 +1,7 @@
 #version 450
 
+#extension GL_EXT_nonuniform_qualifier : enable
+
 const uint MESH_FLAG_TEXTURED_BIT = (1 << 0);
 
 // set 1 is for objects that are update every object
@@ -9,6 +11,10 @@ layout(std140, set = 1, binding = 0) uniform MeshUBO {
     uint flags;
 } mesh;
 
+layout(std140, set = 1, binding = 1) uniform MaterialUBO {
+    uint texture_index;
+} material;
+
 // set 2 is for objects that are updated irregularly
 layout(std140, set = 2, binding = 0) uniform GlobalLightUBO {
     vec3 direction;
@@ -16,7 +22,7 @@ layout(std140, set = 2, binding = 0) uniform GlobalLightUBO {
     float ambient;
 } world_light;
 
-layout (set = 2, binding = 1) uniform sampler2D tex_sampler;
+layout (set = 2, binding = 1) uniform sampler2D global_textures[];
 
 // layout (location = 0) in vec3 vColor;
 layout (location = 0) in vec2 v_tex_coord;
@@ -31,7 +37,8 @@ void main() {
     float light_intensity = world_light.ambient + max(0.0, dot(normal_world_space, -world_light.direction));
  
     if ((mesh.flags & MESH_FLAG_TEXTURED_BIT) != 0) {
-        f_color = texture(tex_sampler, v_tex_coord) * light_intensity;
+        // what does nonuniformEXT do?
+        f_color = texture(global_textures[nonuniformEXT(material.texture_index)], v_tex_coord) * light_intensity;
     } else {
         f_color = mesh.base_color * light_intensity;
     }

@@ -12,10 +12,7 @@ where
 {
     #[inline]
     pub const fn from_rows(r0: Vec2<T>, r1: Vec2<T>) -> Self {
-        Self([
-            Vec2::new(r0.x(), r1.x()),
-            Vec2::new(r0.y(), r1.y()),
-        ])
+        Self([Vec2::new(r0.x(), r1.x()), Vec2::new(r0.y(), r1.y())])
     }
 }
 
@@ -29,10 +26,7 @@ impl<T> Mat2<T> {
 #[allow(dead_code)]
 impl<T: Zero + Copy> Mat2<T> {
     fn scaling(s: Vec2<T>) -> Self {
-        Self::from_cols(
-            Vec2::new(s.x(), T::ZERO),
-            Vec2::new(T::ZERO, s.y()),
-        )
+        Self::from_cols(Vec2::new(s.x(), T::ZERO), Vec2::new(T::ZERO, s.y()))
     }
 }
 
@@ -41,10 +35,7 @@ impl<T: Zero> Zero for Mat2<T> {
 }
 
 impl<T: Zero + One> Identity for Mat2<T> {
-    const IDENTITY: Self = Self::from_cols(
-        Vec2::new(T::ONE, T::ZERO),
-        Vec2::new(T::ZERO, T::ONE),
-    );
+    const IDENTITY: Self = Self::from_cols(Vec2::new(T::ONE, T::ZERO), Vec2::new(T::ZERO, T::ONE));
 }
 
 impl<T> Mat2<T>
@@ -92,9 +83,7 @@ impl Mat2<f32> {
     }
     #[inline]
     pub const fn mul_vec(&self, v: Vec2<f32>) -> Vec2<f32> {
-        self.c0()
-            .scaled(v.x())
-            .add(self.c1().scaled(v.y()))
+        self.c0().scaled(v.x()).add(self.c1().scaled(v.y()))
     }
     #[inline]
     pub const fn transposed(&self) -> Self {

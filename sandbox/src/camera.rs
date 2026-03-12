@@ -1,3 +1,5 @@
+use core::f32;
+
 use math::{Mat4, Quat, RigidTransform, Vec3, Vec4};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
@@ -27,6 +29,7 @@ impl Default for Camera {
 #[allow(dead_code)]
 impl Camera {
     pub fn new(fov_y: f32, aspect_ratio: f32, position: Vec3<f32>, yaw: f32, pitch: f32) -> Self {
+        // TODO: this code is weird. What I want is for the camera to be facing in the WORLD_FORWARDS direction by default when it's initialized.
         let transform = RigidTransform::new(
             position,
             Quat::unit_from_angle_axis(std::f32::consts::PI, WORLD_UP),
@@ -62,7 +65,7 @@ impl Camera {
     }
     pub fn look_at(&mut self, target: Vec3<f32>) {
         // TODO: Redo this funciton. It should be agnostic regarding what coordinate system is being used.
-        // Also, the math might be wrong.
+        // Also, the math might be wrong. Also, is this even doing anything?
         const LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.001;
 
         let dir = target.sub(self.transform.position).normalized();
@@ -81,9 +84,7 @@ impl Camera {
     }
     #[inline]
     pub const fn move_local(&mut self, offset: Vec3<f32>) {
-        // TODO: Why does offset need to be scaled by -1?
-        // This seems off. The view matrix is already inverted.
-        self.transform.translate_local(offset.scaled(-1.0));
+        self.transform.translate_local(offset);
     }
     #[inline]
     pub const fn get_view_matrix(&self) -> Mat4<f32> {
@@ -97,12 +98,8 @@ impl Camera {
     pub fn get_projection_matrix(&self) -> Mat4<f32> {
         const WORLD_TO_VK: Mat4<f32> = {
             use math::Mat3;
-            
-            const FROM_WORLD: Mat3<f32> = Mat3::from_rows(
-                WORLD_RIGHT,
-                WORLD_UP,
-                WORLD_FORWARDS,
-            );
+
+            const FROM_WORLD: Mat3<f32> = Mat3::from_rows(WORLD_RIGHT, WORLD_UP, WORLD_FORWARDS);
 
             const TO_VK: Mat3<f32> = Mat3::from_cols(
                 vulkan::VK_DIR_RIGHT,
@@ -120,11 +117,11 @@ impl Camera {
         const T: f32 = vulkan::VK_VIEW_VOLUME_TOP;
         const B: f32 = vulkan::VK_VIEW_VOLUME_BOTTOM;
 
-        let half_tan = (self.fov_y / 2.0).tan();
+        let half_tan = (self.fov_y.to_radians() / 2.0).tan();
 
         let p = Mat4::from_cols(
             Vec4::new(1.0 / (self.aspect_ratio * half_tan), 0.0, 0.0, 0.0),
-            Vec4::new(0.0, 1.0 / half_tan, 0.0, 0.0),
+            Vec4::new(0.0, -1.0 / half_tan, 0.0, 0.0),
             Vec4::new((R + L) / (R - L), (T + B) / (T - B), f / (f - n), 1.0),
             Vec4::new(0.0, 0.0, -f * n / (f - n), 0.0),
         );

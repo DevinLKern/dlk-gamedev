@@ -171,11 +171,18 @@ impl Device {
 
         let device = {
             let enabled_device_extension_names = vec![ash::khr::swapchain::NAME.as_ptr()];
+            
             let enabled_features = vk::PhysicalDeviceFeatures {
                 sampler_anisotropy: vk::TRUE,
                 ..Default::default()
             };
+            let enabled_descriptor_indexing_features = vk::PhysicalDeviceDescriptorIndexingFeatures {
+                runtime_descriptor_array: vk::TRUE,
+                shader_sampled_image_array_non_uniform_indexing: vk::TRUE,
+                ..Default::default()
+            };
             let synchronization2_features = vk::PhysicalDeviceSynchronization2Features {
+                p_next: &enabled_descriptor_indexing_features as *const _ as *mut std::ffi::c_void,
                 synchronization2: vk::TRUE,
                 ..Default::default()
             };

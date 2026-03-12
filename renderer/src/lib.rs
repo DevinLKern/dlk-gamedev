@@ -79,7 +79,7 @@ impl Renderer {
     pub fn create_render_context(
         &self,
         camera: &crate::CameraUBO,
-        objects: &[crate::MeshUBO],
+        objects: &[(crate::MeshUBO, crate::MaterialUBO)],
         light: &crate::GlobalLightUBO,
         window: &winit::window::Window,
         image: Rc<vulkan::Image>,
@@ -95,13 +95,22 @@ impl Renderer {
                     ..Default::default()
                 }],
                 // SET 1
-                &[vk::DescriptorSetLayoutBinding {
-                    binding: 0,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                    ..Default::default()
-                }],
+                &[
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 0,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                    vk::DescriptorSetLayoutBinding {
+                        binding: 1,
+                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                        descriptor_count: 1,
+                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                        ..Default::default()
+                    },
+                ],
                 // SET 2
                 &[
                     vk::DescriptorSetLayoutBinding {
@@ -114,7 +123,7 @@ impl Renderer {
                     vk::DescriptorSetLayoutBinding {
                         binding: 1,
                         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                        descriptor_count: 1,
+                        descriptor_count: 1, // MAX_TEXTURES
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         ..Default::default()
                     },
@@ -216,15 +225,21 @@ impl Renderer {
 
             obj1.next_multiple_of(alignment)
         };
-        let per_obj_uniform_buffer_size = {
-            let obj1 = std::mem::size_of::<crate::MeshUBO>() as u64;
-
+        let (mesh_offset, material_offset, per_obj_uniform_buffer_size) = {
             let alignment = unsafe {
                 let properties = self.device.get_physical_device_properties();
                 properties.limits.min_uniform_buffer_offset_alignment
             };
 
-            obj1.next_multiple_of(alignment)
+            let mesh_offset = 0;
+
+            let material_offset =
+                (mesh_offset + size_of::<MeshUBO>() as u64).next_multiple_of(alignment);
+
+            let block_size =
+                (material_offset + size_of::<MaterialUBO>() as u64).next_multiple_of(alignment);
+
+            (mesh_offset, material_offset, block_size)
         };
         let other_uniform_buffer_size = {
             let obj1 = std::mem::size_of::<crate::GlobalLightUBO>() as u64;
@@ -255,16 +270,42 @@ impl Renderer {
             }
         }
 
-        let per_obj_uniform_buffers =
-            self.create_dynamic_uniform_buffers(per_obj_uniform_buffer_size, objects.len() as u64)?;
-        for (bv, data) in per_obj_uniform_buffers.iter().zip(objects.iter()) {
+        let per_obj_uniform_buffer =
+            self.create_dynamic_uniform_buffer(per_obj_uniform_buffer_size * objects.len() as u64)?;
+        let per_obj_uniform_buffer = Rc::new(per_obj_uniform_buffer);
+        let mut per_obj_uniform_buffers =
+            Vec::<(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)>::new();
+        for (mesh_data, material_data) in objects.iter() {
+            let offset = per_obj_uniform_buffer_size * per_obj_uniform_buffers.len() as u64;
+            let mesh_bv = vulkan::DynamicUniformBV {
+                buffer: per_obj_uniform_buffer.clone(),
+                offset: offset + mesh_offset,
+                size: std::mem::size_of::<crate::MeshUBO>() as u64,
+            };
             unsafe {
-                let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
+                let dst = mesh_bv.buffer.map_memory(mesh_bv.offset, mesh_bv.size)?;
 
-                std::ptr::copy_nonoverlapping(data, dst as *mut crate::MeshUBO, 1);
+                std::ptr::copy_nonoverlapping(mesh_data, dst as *mut crate::MeshUBO, 1);
 
-                bv.buffer.unmap();
+                mesh_bv.buffer.unmap();
             }
+
+            let material_bv = vulkan::DynamicUniformBV {
+                buffer: per_obj_uniform_buffer.clone(),
+                offset: offset + material_offset,
+                size: std::mem::size_of::<crate::MaterialUBO>() as u64,
+            };
+            unsafe {
+                let dst = material_bv
+                    .buffer
+                    .map_memory(material_bv.offset, material_bv.size)?;
+
+                std::ptr::copy_nonoverlapping(material_data, dst as *mut crate::MaterialUBO, 1);
+
+                material_bv.buffer.unmap();
+            }
+
+            per_obj_uniform_buffers.push((mesh_bv, material_bv));
         }
 
         let other_uniform_buffer = self
@@ -287,7 +328,7 @@ impl Renderer {
             for bv in per_frame_uniform_buffers.iter() {
                 let info = vk::DescriptorBufferInfo {
                     buffer: bv.buffer.handle,
-                    offset: bv.offset,
+                    offset: 0,
                     range: bv.size,
                 };
                 per_frame_buffer_infos.push(info);
@@ -310,22 +351,41 @@ impl Renderer {
             }
 
             let mut per_obj_buffer_infos = Vec::new();
-            for bv in per_obj_uniform_buffers.iter() {
-                let info = vk::DescriptorBufferInfo {
-                    buffer: bv.buffer.handle,
+            for (mesh_bv, material_bv) in per_obj_uniform_buffers.iter() {
+                // TODO: I used to set offset to mesh_bv.offset or material_bv.offset,
+                // but that caused validation errors. I need to research what exactly
+                // offset should be and update my code to reflect that.
+
+                let mesh_info = vk::DescriptorBufferInfo {
+                    buffer: mesh_bv.buffer.handle,
                     offset: 0,
-                    range: bv.size,
+                    range: mesh_bv.size,
                 };
-                per_obj_buffer_infos.push(info);
+                let material_info = vk::DescriptorBufferInfo {
+                    buffer: material_bv.buffer.handle,
+                    offset: 0,
+                    range: material_bv.size,
+                };
+                per_obj_buffer_infos.push((mesh_info, material_info));
             }
-            for bi in per_obj_buffer_infos.iter() {
+            for (mesh_bi, material_bi) in per_obj_buffer_infos.iter() {
                 descriptor_writes.push(vk::WriteDescriptorSet {
                     dst_set: per_obj_descriptor_set.handle,
                     dst_binding: 0,
                     dst_array_element: 0,
                     descriptor_count: 1,
                     descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    p_buffer_info: bi,
+                    p_buffer_info: mesh_bi,
+                    ..Default::default()
+                });
+
+                descriptor_writes.push(vk::WriteDescriptorSet {
+                    dst_set: per_obj_descriptor_set.handle,
+                    dst_binding: 1,
+                    dst_array_element: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    p_buffer_info: material_bi,
                     ..Default::default()
                 });
             }
@@ -353,7 +413,7 @@ impl Renderer {
                 dst_set: other_descriptor_set.handle,
                 dst_binding: 1,
                 dst_array_element: 0,
-                descriptor_count: 1,
+                descriptor_count: 1, // MAX_TEXTURES
                 descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
                 p_image_info: &image_info,
                 ..Default::default()
@@ -373,7 +433,7 @@ impl Renderer {
             per_obj_descriptor_set,
             other_descriptor_sets,
             per_frame_uniform_buffers,
-            per_obj_uniform_buffers,
+            per_obj_uniform_buffers.into_boxed_slice(),
             other_uniform_buffer,
             image,
         )
@@ -514,19 +574,10 @@ impl Renderer {
             Ok(uniform_bv.buffer.unmap())
         }
     }
-    pub fn create_dynamic_uniform_buffers(
-        &self,
-        size: u64,
-        count: u64,
-    ) -> Result<Box<[vulkan::DynamicUniformBV]>> {
-        let aligned_size = {
-            let props = unsafe { self.device.get_physical_device_properties() };
-            size.next_multiple_of(props.limits.min_uniform_buffer_offset_alignment)
-        };
-
+    pub fn create_dynamic_uniform_buffer(&self, size: u64) -> Result<vulkan::Buffer> {
         let buffer = {
             let create_info = vulkan::BufferCreateInfo {
-                size: aligned_size * count,
+                size: size,
                 usage: vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_DST,
                 memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
                     | vk::MemoryPropertyFlags::HOST_COHERENT,
@@ -536,17 +587,7 @@ impl Renderer {
                 .inspect_err(|e| tracing::error!("{}", e))?
         };
 
-        let buffer = Rc::new(buffer);
-
-        let views: Box<[vulkan::DynamicUniformBV]> = (0..count)
-            .map(|i| vulkan::DynamicUniformBV {
-                buffer: buffer.clone(),
-                offset: aligned_size * i,
-                size: size,
-            })
-            .collect();
-
-        Ok(views)
+        Ok(buffer)
     }
     pub fn update_dynamic_uniform_buffer(
         &self,

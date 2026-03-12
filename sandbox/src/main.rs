@@ -102,7 +102,7 @@ impl Application {
         display_handle: &winit::raw_window_handle::DisplayHandle,
     ) -> Result<Self> {
         let state = ApplicationState::ObjectMode;
-        
+
         let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
         let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
         let renderer = renderer::Renderer::new(device)?;
@@ -323,12 +323,14 @@ impl Application {
                 )
             };
 
-            renderer.create_index_buffer(
-                data,
-                vk::IndexType::UINT32,
-                PLANE_INDEX_BUFFER_DATA.len() as u32,
-                0,
-            ).inspect_err(|e| tracing::error!("{e}"))?
+            renderer
+                .create_index_buffer(
+                    data,
+                    vk::IndexType::UINT32,
+                    PLANE_INDEX_BUFFER_DATA.len() as u32,
+                    0,
+                )
+                .inspect_err(|e| tracing::error!("{e}"))?
         };
 
         let plane_index_buffer = Rc::new(plane_index_buffer);
@@ -337,7 +339,9 @@ impl Application {
             let image_data =
                 image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
 
-            renderer.create_image(image_data).inspect_err(|e| tracing::error!("{e}"))?
+            renderer
+                .create_image(image_data)
+                .inspect_err(|e| tracing::error!("{e}"))?
         };
 
         let plane_transform = math::AffineTransform {
@@ -406,31 +410,39 @@ impl Application {
                     ..Default::default()
                 };
                 let mesh_ubos = [
-                    renderer::MeshUBO {
-                        model: self.plane_transform.as_mat4().into_2d_arr(),
-                        base_color: self.plane_base_color.into_arr(),
-                        flags: self.plane_flags,
-                    },
-                    renderer::MeshUBO {
-                        model: self.model_transform.as_mat4().into_2d_arr(),
-                        base_color: self.model_base_color.into_arr(),
-                        flags: self.model_flags,
-                    },
+                    (
+                        renderer::MeshUBO {
+                            model: self.plane_transform.as_mat4().into_2d_arr(),
+                            base_color: self.plane_base_color.into_arr(),
+                            flags: self.plane_flags,
+                        },
+                        renderer::MaterialUBO { texture_index: 0 },
+                    ),
+                    (
+                        renderer::MeshUBO {
+                            model: self.model_transform.as_mat4().into_2d_arr(),
+                            base_color: self.model_base_color.into_arr(),
+                            flags: self.model_flags,
+                        },
+                        renderer::MaterialUBO { texture_index: 0 },
+                    ),
                 ];
-
                 let light_ubo = renderer::GlobalLightUBO {
                     direction: self.global_light_direction.into_arr(),
                     color: self.global_light_color.into_arr(),
                     ambient: self.global_ambient_light,
                     ..Default::default()
                 };
-                let new_context = self.renderer.create_render_context(
-                    &camera_ubo,
-                    &mesh_ubos,
-                    &light_ubo,
-                    window,
-                    self.image.clone(),
-                ).inspect_err(|e| tracing::error!("{e}"))?;
+                let new_context = self
+                    .renderer
+                    .create_render_context(
+                        &camera_ubo,
+                        &mesh_ubos,
+                        &light_ubo,
+                        window,
+                        self.image.clone(),
+                    )
+                    .inspect_err(|e| tracing::error!("{e}"))?;
 
                 *context = new_context;
             }
@@ -458,13 +470,17 @@ impl Application {
 
                 let pipeline = context.get_pipeline();
 
-                let plane_dynamic_offset: [u32; 1] =
-                    [context.get_per_obj_dynamic_uniform_buffers()[0].offset as u32];
+                let plane_dynamic_offset: [u32; 2] = [
+                    context.get_per_obj_dynamic_uniform_buffers()[0].0.offset as u32,
+                    context.get_per_obj_dynamic_uniform_buffers()[0].1.offset as u32,
+                ];
                 let plane_vertex_buffer = self.plane_vertex_buffer.clone();
                 let plane_index_buffer = self.plane_index_buffer.clone();
 
-                let model_dynamic_offset: [u32; 1] =
-                    [context.get_per_obj_dynamic_uniform_buffers()[1].offset as u32];
+                let model_dynamic_offset: [u32; 2] = [
+                    context.get_per_obj_dynamic_uniform_buffers()[1].0.offset as u32,
+                    context.get_per_obj_dynamic_uniform_buffers()[1].1.offset as u32,
+                ];
                 let mesh_ubo = [renderer::MeshUBO {
                     model: self.model_transform.as_mat4().into_2d_arr(),
                     base_color: self.model_base_color.into_arr(),
@@ -475,7 +491,7 @@ impl Application {
                     .update_dynamic_uniform_buffer(
                         mesh_ubo_ptr,
                         std::mem::size_of::<renderer::MeshUBO>(),
-                        &context.get_per_obj_dynamic_uniform_buffers()[1],
+                        &context.get_per_obj_dynamic_uniform_buffers()[1].0,
                     )
                     .inspect_err(|e| tracing::error!("{e}"))?;
                 let model_vertex_buffers = self.model_vertex_buffers.clone();
@@ -527,12 +543,13 @@ impl Application {
                             }
                             KeyCode::KeyE => {
                                 if let ApplicationState::CameraMode = self.state {
-                                    camera.move_local(WORLD_FORWARDS.scaled(SPEED));
+                                    // TODO: This part is wrong. Fix it.
+                                    camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
                                 }
                             }
                             KeyCode::KeyD => {
                                 if let ApplicationState::CameraMode = self.state {
-                                    camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
+                                    camera.move_local(WORLD_FORWARDS.scaled(SPEED));
                                 }
                             }
                             KeyCode::KeyF => {
@@ -590,29 +607,28 @@ impl Application {
 
                 // tracing::trace!("Mouse Input!");
                 match button {
-                    MouseButton::Left => {
-                        match self.active_window {
-                            None => {
-                                self.active_window = self.focused_window;
-                                window
-                                    .set_cursor_grab(winit::window::CursorGrabMode::Locked)
-                                    .or_else(|_| {
-                                        window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
-                                    }).inspect_err(|e| tracing::error!("{e}"))?;
-                                window.set_cursor_visible(false);
-                            }
-                            Some(_) => {
-                                self.active_window = None;
-                                match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
-                                    Err(e) => {
-                                        tracing::error!("{}", e);
-                                    }
-                                    _ => {}
-                                }
-                                window.set_cursor_visible(true);
-                            }
+                    MouseButton::Left => match self.active_window {
+                        None => {
+                            self.active_window = self.focused_window;
+                            window
+                                .set_cursor_grab(winit::window::CursorGrabMode::Locked)
+                                .or_else(|_| {
+                                    window.set_cursor_grab(winit::window::CursorGrabMode::Confined)
+                                })
+                                .inspect_err(|e| tracing::error!("{e}"))?;
+                            window.set_cursor_visible(false);
                         }
-                    }
+                        Some(_) => {
+                            self.active_window = None;
+                            match window.set_cursor_grab(winit::window::CursorGrabMode::None) {
+                                Err(e) => {
+                                    tracing::error!("{}", e);
+                                }
+                                _ => {}
+                            }
+                            window.set_cursor_visible(true);
+                        }
+                    },
                     _ => {}
                 }
             }
@@ -654,7 +670,7 @@ impl ApplicationHandler for Application {
             let aspect_ratio = w / h;
 
             Camera::new(
-                80.0,
+                65.0,
                 aspect_ratio,
                 self.model_transform
                     .position
@@ -672,16 +688,22 @@ impl ApplicationHandler for Application {
             ..Default::default()
         };
         let mesh_ubos = [
-            renderer::MeshUBO {
-                model: self.plane_transform.as_mat4().into_2d_arr(),
-                base_color: self.plane_base_color.into_arr(),
-                flags: self.plane_flags,
-            },
-            renderer::MeshUBO {
-                model: self.model_transform.as_mat4().into_2d_arr(),
-                base_color: self.model_base_color.into_arr(),
-                flags: self.model_flags,
-            },
+            (
+                renderer::MeshUBO {
+                    model: self.plane_transform.as_mat4().into_2d_arr(),
+                    base_color: self.plane_base_color.into_arr(),
+                    flags: self.plane_flags,
+                },
+                renderer::MaterialUBO { texture_index: 0 },
+            ),
+            (
+                renderer::MeshUBO {
+                    model: self.model_transform.as_mat4().into_2d_arr(),
+                    base_color: self.model_base_color.into_arr(),
+                    flags: self.model_flags,
+                },
+                renderer::MaterialUBO { texture_index: 0 },
+            ),
         ];
         let light_ubo = renderer::GlobalLightUBO {
             direction: self.global_light_direction.into_arr(),
@@ -729,7 +751,7 @@ impl ApplicationHandler for Application {
             ApplicationState::CameraMode => {
                 match event {
                     DeviceEvent::MouseMotion { delta } => {
-                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dx = -delta.0 * self.mouse_sensitivity;
                         let dy = -delta.1 * self.mouse_sensitivity;
 
                         camera.rotate(dx as f32, dy as f32);
@@ -742,13 +764,14 @@ impl ApplicationHandler for Application {
             ApplicationState::ObjectMode => {
                 match event {
                     DeviceEvent::MouseMotion { delta } => {
-                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dx = -delta.0 * self.mouse_sensitivity;
                         let dy = -delta.1 * self.mouse_sensitivity;
 
                         let qx = Quat::unit_from_angle_axis(dx as f32, WORLD_UP);
                         let qy = Quat::unit_from_angle_axis(dy as f32, WORLD_RIGHT);
 
-                        self.model_transform.rotate_global(qx.mul(qy), self.model_transform.position);
+                        self.model_transform
+                            .rotate_global(qx.mul(qy), self.model_transform.position);
                     }
                     _ => {
                         // tracing::info!("Not implemented")
@@ -796,8 +819,14 @@ fn main() -> Result<()> {
     let args: Box<[String]> = std::env::args().collect();
 
     let print_usage = || -> Result<()> {
-        let name = format!("{}", std::env::current_exe()?.file_name().unwrap().display());
-        println!("Invalid program arguments. Usage: {} <model> <options>", name);
+        let name = format!(
+            "{}",
+            std::env::current_exe()?.file_name().unwrap().display()
+        );
+        println!(
+            "Invalid program arguments. Usage: {} <model> <options>",
+            name
+        );
         println!("To view all options type {} --help", name);
         return Ok(());
     };
@@ -816,10 +845,12 @@ fn main() -> Result<()> {
         println!("        may be one of: <+x|-x|+y|-y|+z|-z>");
         println!("    --derive-normals normals to be derived when missing. Defaults to true.");
         println!("        may be one of of: <true|false>");
-        println!("    --mouse-sensitivity Specifies the sensitivity of the mouse. Defaults to 50.0");
+        println!(
+            "    --mouse-sensitivity Specifies the sensitivity of the mouse. Defaults to 50.0"
+        );
         println!("        may be any value from 1 to 100");
 
-        return Ok(())
+        return Ok(());
     }
 
     let model_path = {
@@ -936,20 +967,13 @@ fn main() -> Result<()> {
     }
 
     let obj_to_world = {
-        let to_obj = math::Mat3::<f32>::from_cols(
-            obj_r,
-            obj_u,
-            obj_f,
-        );
+        let to_obj = math::Mat3::<f32>::from_cols(obj_r, obj_u, obj_f);
 
         // The transpose is equivalent to the inverse of a matrix when the matrix is orthonormal.
         let from_obj = to_obj.transposed();
 
-        const INTO_WORLD: math::Mat3<f32> = math::Mat3::from_cols(
-            WORLD_RIGHT,
-            WORLD_UP,
-            WORLD_FORWARDS,
-        );
+        const INTO_WORLD: math::Mat3<f32> =
+            math::Mat3::from_cols(WORLD_RIGHT, WORLD_UP, WORLD_FORWARDS);
 
         from_obj.mul(&INTO_WORLD)
     };
