@@ -1,6 +1,6 @@
 use core::f32;
 
-use math::{Mat4, Quat, RigidTransform, Vec3, Vec4};
+use math::{Identity, Mat4, Quat, RigidTransform, Vec3, Vec4, Zero};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
 
@@ -28,24 +28,33 @@ impl Default for Camera {
 
 #[allow(dead_code)]
 impl Camera {
-    pub fn new(fov_y: f32, aspect_ratio: f32, position: Vec3<f32>, yaw: f32, pitch: f32) -> Self {
-        // TODO: this code is weird. What I want is for the camera to be facing in the WORLD_FORWARDS direction by default when it's initialized.
-        let transform = RigidTransform::new(
-            position,
-            Quat::unit_from_angle_axis(std::f32::consts::PI, WORLD_UP),
-        );
-        let mut r = Self {
+    pub fn new(fov_y: f32, aspect_ratio: f32, position: Vec3<f32>, forward: Vec3<f32>) -> Self {
+        let forward = forward.normalized();
+
+        let axis = WORLD_FORWARDS.cross(forward);
+        let dot = WORLD_FORWARDS.dot(forward).clamp(-1.0, 1.0);
+        let angle = dot.acos();
+
+        let rotation = if axis.length_squared() < 1e-6 {
+            if dot < 0.0 {
+                Quat::unit_from_angle_axis(std::f32::consts::PI, WORLD_UP)
+            } else {
+                Quat::IDENTITY
+            }
+        } else {
+            Quat::unit_from_angle_axis(angle, axis.normalized())
+        };
+
+        let transform = RigidTransform::new(position, rotation);
+
+        Self {
             transform,
             pitch: 0.0,
             fov_y,
             aspect_ratio,
             near: 0.1,
             far: 1000.0,
-        };
-
-        r.rotate(yaw, pitch);
-
-        r
+        }
     }
     pub fn set_aspect_ratio(&mut self, new_aspect_ratio: f32) {
         self.aspect_ratio = new_aspect_ratio;
@@ -122,10 +131,57 @@ impl Camera {
         let p = Mat4::from_cols(
             Vec4::new(1.0 / (self.aspect_ratio * half_tan), 0.0, 0.0, 0.0),
             Vec4::new(0.0, -1.0 / half_tan, 0.0, 0.0),
-            Vec4::new((R + L) / (R - L), (T + B) / (T - B), f / (f - n), 1.0),
+            Vec4::new((R + L) / (R - L), (T + B) / (T - B), -f / (f - n), -1.0),
             Vec4::new(0.0, 0.0, -f * n / (f - n), 0.0),
         );
 
         p.mul(&WORLD_TO_VK)
+    }
+}
+
+
+#[cfg(test)]
+mod test {
+    use crate::{Camera, constants::WORLD_FORWARDS, constants::WORLD_RIGHT};
+    use math::Vec3;
+    fn approx_eq_f32(a: f32, b: f32, eps: f32) -> bool {
+        (a - b).abs() < eps
+    }
+    fn approx_eq_vec3(a: Vec3<f32>, b: Vec3<f32>) -> bool {
+        const EPS: f32 = 0.0001;
+
+        if !approx_eq_f32(a.x(), b.x(), EPS) {
+            return false;
+        }
+        if !approx_eq_f32(a.y(), b.y(), EPS) {
+            return false;
+        }
+        if !approx_eq_f32(a.z(), b.z(), EPS) {
+            return false;
+        }
+
+        return true;
+    }
+    
+    #[test]
+    fn move_local() {
+        let mut c = Camera::default();
+
+        c.move_local(WORLD_FORWARDS);
+
+        assert_eq!(c.transform.position, WORLD_FORWARDS);
+        
+        let mut c = Camera::default();
+
+        c.move_local(WORLD_RIGHT);
+
+        assert_eq!(c.transform.position, WORLD_RIGHT);
+
+        let mut c = Camera::default();
+
+        c.rotate(std::f32::consts::PI, 0.0);
+        c.move_local(WORLD_FORWARDS);
+
+        assert_eq!(approx_eq_vec3(c.transform.position, WORLD_FORWARDS.scaled(-1.0)), true);
     }
 }

@@ -41,7 +41,7 @@ struct Application {
     plane_index_buffer: Rc<vulkan::IndexBV>,
     model_vertex_buffers: Rc<[vulkan::VertexBV]>,
     model_index_buffers: Rc<[vulkan::IndexBV]>,
-    image: Rc<vulkan::Image>,
+    images: Rc<[vulkan::Image]>,
     model_transform: math::AffineTransform,
     model_base_color: Vec4<f32>,
     model_flags: u32,
@@ -106,6 +106,17 @@ impl Application {
         let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
         let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
         let renderer = renderer::Renderer::new(device)?;
+        let images = {
+            let default_image_data =
+                image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
+
+            let default_image = renderer
+                .create_image(default_image_data)
+                .inspect_err(|e| tracing::error!("{e}"))?;
+
+            
+            Rc::new([default_image])
+        };
 
         let (model_vertex_buffers, model_index_buffers, model_transform) = {
             let file_contents = std::fs::read_to_string(model_path)?;
@@ -335,15 +346,6 @@ impl Application {
 
         let plane_index_buffer = Rc::new(plane_index_buffer);
 
-        let image = {
-            let image_data =
-                image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
-
-            renderer
-                .create_image(image_data)
-                .inspect_err(|e| tracing::error!("{e}"))?
-        };
-
         let plane_transform = math::AffineTransform {
             position: model_transform.position.add(Vec3::ZERO.sub(WORLD_UP)),
             orientation: math::Quat::IDENTITY,
@@ -362,7 +364,7 @@ impl Application {
             model_vertex_buffers: model_vertex_buffers.into(),
             model_index_buffers: model_index_buffers.into(),
             exiting: false,
-            image,
+            images,
             model_transform,
             model_base_color: Vec4::new(1.0, 0.1, 0.4, 1.0),
             model_flags: 0,
@@ -440,7 +442,7 @@ impl Application {
                         &mesh_ubos,
                         &light_ubo,
                         window,
-                        self.image.clone(),
+                        self.images.clone(),
                     )
                     .inspect_err(|e| tracing::error!("{e}"))?;
 
@@ -544,12 +546,12 @@ impl Application {
                             KeyCode::KeyE => {
                                 if let ApplicationState::CameraMode = self.state {
                                     // TODO: This part is wrong. Fix it.
-                                    camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
+                                    camera.move_local(WORLD_FORWARDS.scaled(SPEED));
                                 }
                             }
                             KeyCode::KeyD => {
                                 if let ApplicationState::CameraMode = self.state {
-                                    camera.move_local(WORLD_FORWARDS.scaled(SPEED));
+                                    camera.move_local(WORLD_FORWARDS.scaled(-SPEED));
                                 }
                             }
                             KeyCode::KeyF => {
@@ -664,7 +666,7 @@ impl ApplicationHandler for Application {
                 return self.exiting(event_loop);
             }
         };
-        let mut camera = {
+        let camera = {
             let s = window.inner_size();
             let (w, h) = (s.width as f32, s.height as f32);
             let aspect_ratio = w / h;
@@ -675,11 +677,10 @@ impl ApplicationHandler for Application {
                 self.model_transform
                     .position
                     .add(Vec3::ZERO.sub(WORLD_FORWARDS).add(WORLD_UP.scaled(0.5))),
-                0.0,
-                0.0,
+                WORLD_FORWARDS
             )
         };
-        camera.look_at(self.model_transform.position);
+        // camera.look_at(self.model_transform.position);
         let window_id = window.id();
 
         let camera_ubo = renderer::CameraUBO {
@@ -716,7 +717,7 @@ impl ApplicationHandler for Application {
             &mesh_ubos,
             &light_ubo,
             &window,
-            self.image.clone(),
+            self.images.clone(),
         ) {
             Ok(context) => context,
             Err(e) => {
@@ -764,8 +765,8 @@ impl ApplicationHandler for Application {
             ApplicationState::ObjectMode => {
                 match event {
                     DeviceEvent::MouseMotion { delta } => {
-                        let dx = -delta.0 * self.mouse_sensitivity;
-                        let dy = -delta.1 * self.mouse_sensitivity;
+                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dy = delta.1 * self.mouse_sensitivity;
 
                         let qx = Quat::unit_from_angle_axis(dx as f32, WORLD_UP);
                         let qy = Quat::unit_from_angle_axis(dy as f32, WORLD_RIGHT);

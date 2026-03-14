@@ -82,7 +82,7 @@ impl Renderer {
         objects: &[(crate::MeshUBO, crate::MaterialUBO)],
         light: &crate::GlobalLightUBO,
         window: &winit::window::Window,
-        image: Rc<vulkan::Image>,
+        images: Rc<[vulkan::Image]>,
     ) -> result::Result<RenderContext> {
         let pipeline_layout = {
             let set_bindings: &[&[vk::DescriptorSetLayoutBinding]] = &[
@@ -123,7 +123,7 @@ impl Renderer {
                     vk::DescriptorSetLayoutBinding {
                         binding: 1,
                         descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                        descriptor_count: 1, // MAX_TEXTURES
+                        descriptor_count: images.len() as u32,
                         stage_flags: vk::ShaderStageFlags::FRAGMENT,
                         ..Default::default()
                     },
@@ -395,11 +395,11 @@ impl Renderer {
                 offset: other_uniform_buffer.offset,
                 range: other_uniform_buffer.size,
             };
-            let image_info = vk::DescriptorImageInfo {
+            let image_infos: Box<[vk::DescriptorImageInfo]> = images.iter().map(|img| vk::DescriptorImageInfo {
                 sampler: self.sampler,
-                image_view: image.view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: should be stored in the image class?
-            };
+                image_view: img.view,
+                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: store in image class?
+            }).collect();
             descriptor_writes.push(vk::WriteDescriptorSet {
                 dst_set: other_descriptor_set.handle,
                 dst_binding: 0,
@@ -409,15 +409,17 @@ impl Renderer {
                 p_buffer_info: &other_bi,
                 ..Default::default()
             });
-            descriptor_writes.push(vk::WriteDescriptorSet {
-                dst_set: other_descriptor_set.handle,
-                dst_binding: 1,
-                dst_array_element: 0,
-                descriptor_count: 1, // MAX_TEXTURES
-                descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                p_image_info: &image_info,
-                ..Default::default()
-            });
+            for (index, image_info) in image_infos.iter().enumerate() {
+                descriptor_writes.push(vk::WriteDescriptorSet {
+                    dst_set: other_descriptor_set.handle,
+                    dst_binding: 1,
+                    dst_array_element: index as u32,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    p_image_info: image_info,
+                    ..Default::default()
+                });
+            }
             unsafe { self.device.update_descriptor_sets(&descriptor_writes, &[]) };
         }
 
@@ -435,7 +437,7 @@ impl Renderer {
             per_frame_uniform_buffers,
             per_obj_uniform_buffers.into_boxed_slice(),
             other_uniform_buffer,
-            image,
+            images,
         )
     }
     fn get_command_buffer(&self) -> Result<vk::CommandBuffer> {
@@ -608,7 +610,7 @@ impl Renderer {
     pub fn create_image(
         &self,
         image_data: image::DynamicImage,
-    ) -> result::Result<Rc<vulkan::Image>> {
+    ) -> result::Result<vulkan::Image> {
         use image::GenericImageView;
 
         let (width, height) = image_data.dimensions();
@@ -771,7 +773,7 @@ impl Renderer {
                 .free_command_buffers(self.command_pool, &[command_buffer]);
         }
 
-        Ok(Rc::new(image))
+        Ok(image)
     }
 }
 

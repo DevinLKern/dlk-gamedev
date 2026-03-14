@@ -15,10 +15,11 @@ pub struct RenderContext {
     per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
     per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
     other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
-    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>, // keeps image alive as long as render context is alive
+    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>, 
     per_obj_dynamic_uniform_buffers: Box<[(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)]>,
     other_uniform_buffer: Rc<vulkan::UniformBV>,
-    image: Rc<vulkan::Image>,
+    // keeps image alive as long as render context is alive
+    images: Rc<[vulkan::Image]>,
     index: usize,
 }
 
@@ -37,7 +38,7 @@ impl RenderContext {
             [(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)],
         >,
         other_uniform_buffer: Rc<vulkan::UniformBV>,
-        image: Rc<vulkan::Image>,
+        images: Rc<[vulkan::Image]>,
     ) -> crate::Result<RenderContext> {
         let per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = per_frame_descriptor_sets
             .into_iter()
@@ -320,8 +321,8 @@ impl RenderContext {
                 ..Default::default()
             };
             let attachments = [vk::PipelineColorBlendAttachmentState {
-                blend_enable: vk::FALSE,
-                src_color_blend_factor: vk::BlendFactor::ZERO,
+                blend_enable: vk::TRUE,
+                src_color_blend_factor: vk::BlendFactor::SRC_ALPHA,
                 dst_color_blend_factor: vk::BlendFactor::ZERO,
                 color_blend_op: vk::BlendOp::ADD,
                 src_alpha_blend_factor: vk::BlendFactor::ZERO,
@@ -392,7 +393,7 @@ impl RenderContext {
             per_frame_uniform_buffers,
             per_obj_dynamic_uniform_buffers,
             other_uniform_buffer,
-            image,
+            images,
             index: 0,
         })
     }
