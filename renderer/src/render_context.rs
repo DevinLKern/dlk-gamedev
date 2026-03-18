@@ -15,7 +15,7 @@ pub struct RenderContext {
     per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
     per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
     other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
-    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>, 
+    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
     per_obj_dynamic_uniform_buffers: Box<[(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)]>,
     other_uniform_buffer: Rc<vulkan::UniformBV>,
     // keeps image alive as long as render context is alive

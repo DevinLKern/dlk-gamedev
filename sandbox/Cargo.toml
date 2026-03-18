@@ -16,8 +16,8 @@ ash = "0.38.0"
 vulkan = { path = "../vulkan" }
 renderer = { path = "../renderer" }
 math = { path = "../math" }
+obj-mtl = { path = "../obj-mtl" }
 image = "=0.25.9"
-wavefront_obj = "11.0.0"
 tracing = { version = "0.1.44", features = ["max_level_trace", "release_max_level_warn"] }
 tracing-subscriber = "0.3.22"
 tracing-appender = "0.2.4"

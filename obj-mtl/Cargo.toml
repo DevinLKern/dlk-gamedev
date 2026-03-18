@@ -1,0 +1,6 @@
+[package]
+name = "obj-mtl"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]

@@ -2,7 +2,7 @@
 members = [
     "renderer",
     "spirv",
-    "sandbox",
+    "sandbox", "obj-mtl",
 ]
 
 resolver = "3"

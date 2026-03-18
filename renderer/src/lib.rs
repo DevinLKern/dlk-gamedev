@@ -395,11 +395,14 @@ impl Renderer {
                 offset: other_uniform_buffer.offset,
                 range: other_uniform_buffer.size,
             };
-            let image_infos: Box<[vk::DescriptorImageInfo]> = images.iter().map(|img| vk::DescriptorImageInfo {
-                sampler: self.sampler,
-                image_view: img.view,
-                image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: store in image class?
-            }).collect();
+            let image_infos: Box<[vk::DescriptorImageInfo]> = images
+                .iter()
+                .map(|img| vk::DescriptorImageInfo {
+                    sampler: self.sampler,
+                    image_view: img.view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: store in image class?
+                })
+                .collect();
             descriptor_writes.push(vk::WriteDescriptorSet {
                 dst_set: other_descriptor_set.handle,
                 dst_binding: 0,
@@ -607,10 +610,7 @@ impl Renderer {
             Ok(uniform_bv.buffer.unmap())
         }
     }
-    pub fn create_image(
-        &self,
-        image_data: image::DynamicImage,
-    ) -> result::Result<vulkan::Image> {
+    pub fn create_image(&self, image_data: image::DynamicImage) -> result::Result<vulkan::Image> {
         use image::GenericImageView;
 
         let (width, height) = image_data.dimensions();

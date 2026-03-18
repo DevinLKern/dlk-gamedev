@@ -1,6 +1,6 @@
 use core::f32;
 
-use math::{Identity, Mat4, Quat, RigidTransform, Vec3, Vec4, Zero};
+use math::{Identity, Mat4, Quat, RigidTransform, Vec3, Vec4};
 
 use crate::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
 
@@ -139,7 +139,6 @@ impl Camera {
     }
 }
 
-
 #[cfg(test)]
 mod test {
     use crate::{Camera, constants::WORLD_FORWARDS, constants::WORLD_RIGHT};
@@ -162,7 +161,7 @@ mod test {
 
         return true;
     }
-    
+
     #[test]
     fn move_local() {
         let mut c = Camera::default();
@@ -170,7 +169,7 @@ mod test {
         c.move_local(WORLD_FORWARDS);
 
         assert_eq!(c.transform.position, WORLD_FORWARDS);
-        
+
         let mut c = Camera::default();
 
         c.move_local(WORLD_RIGHT);
@@ -182,6 +181,9 @@ mod test {
         c.rotate(std::f32::consts::PI, 0.0);
         c.move_local(WORLD_FORWARDS);
 
-        assert_eq!(approx_eq_vec3(c.transform.position, WORLD_FORWARDS.scaled(-1.0)), true);
+        assert_eq!(
+            approx_eq_vec3(c.transform.position, WORLD_FORWARDS.scaled(-1.0)),
+            true
+        );
     }
 }

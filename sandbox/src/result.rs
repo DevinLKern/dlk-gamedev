@@ -6,7 +6,7 @@ pub enum Error {
     WinitHandleError(winit::raw_window_handle::HandleError),
     VulkanError(vulkan::result::Error),
     ImageError(image::ImageError),
-    WavefrontError(wavefront_obj::ParseError),
+    ObjMtlError(obj_mtl::Error),
     RendererError(renderer::Error),
     WindowIdInvalid,
 }
@@ -22,7 +22,7 @@ impl std::fmt::Display for Error {
             Self::ImageError(e) => write!(f, "ImageError({})", e),
             Self::RendererError(e) => write!(f, "RendererError({})", e),
             Self::WindowIdInvalid => write!(f, "WindowIdInvalid"),
-            Self::WavefrontError(e) => write!(f, "WavefrontError({})", e),
+            Self::ObjMtlError(e) => write!(f, "ObjMtlError({})", e),
             // _ => write!(f, "std::fmt::Display not implemented!"),
         }
     }
@@ -58,9 +58,9 @@ impl From<image::ImageError> for Error {
     }
 }
 
-impl From<wavefront_obj::ParseError> for Error {
-    fn from(value: wavefront_obj::ParseError) -> Self {
-        Error::WavefrontError(value)
+impl From<obj_mtl::Error> for Error {
+    fn from(value: obj_mtl::Error) -> Self {
+        Error::ObjMtlError(value)
     }
 }
 

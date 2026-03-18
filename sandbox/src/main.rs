@@ -29,7 +29,6 @@ enum ApplicationState {
     CameraMode,
 }
 
-#[allow(dead_code)]
 struct Application {
     state: ApplicationState,
     mouse_sensitivity: f64,
@@ -114,97 +113,104 @@ impl Application {
                 .create_image(default_image_data)
                 .inspect_err(|e| tracing::error!("{e}"))?;
 
-            
             Rc::new([default_image])
         };
 
         let (model_vertex_buffers, model_index_buffers, model_transform) = {
-            let file_contents = std::fs::read_to_string(model_path)?;
-            let scene = wavefront_obj::obj::parse(file_contents)?;
+            use obj_mtl::*;
+            let objf = ObjScene::from_file(model_path)?;
 
             let mut object_data = Vec::<(Vec<ShaderVertVertex>, Vec<u32>)>::new();
 
-            // problem is in this for loop somewhere
-            for obj in scene.objects.into_iter() {
+            for shape in objf.get_shapes() {
                 let mut vertices = Vec::<ShaderVertVertex>::new();
                 let mut indices = Vec::<u32>::new();
-                let mut vertex_map = HashMap::<(usize, Option<usize>, Option<usize>), u32>::new();
+                let mut vertex_map = HashMap::<VtnIndex, u32>::new();
 
-                for geo in obj.geometry.iter() {
-                    for shape in geo.shapes.iter() {
-                        if let wavefront_obj::obj::Primitive::Triangle(v1, v2, v3) = shape.primitive
-                        {
-                            let derived_normal = if derive_normals {
-                                match (v1.1, v2.1, v3.1) {
-                                    (None, None, None) => {
-                                        let p1 = obj.vertices[v1.0];
-                                        let p1 = Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32);
-                                        let p2 = obj.vertices[v2.0];
-                                        let p2 = Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32);
-                                        let p3 = obj.vertices[v3.0];
-                                        let p3 = Vec3::new(p3.x as f32, p3.y as f32, p3.z as f32);
-
-                                        let face_normal = p2.sub(p3).cross(p3.sub(p1));
-
-                                        Some(obj_to_world.mul_vec(face_normal).into_arr())
-                                    }
-                                    _ => None,
-                                }
-                            } else {
-                                None
-                            };
-                            let derived_normal = match derived_normal {
-                                Some(n) => n,
-                                None => [0.0, 0.0, 0.0],
-                            };
-
-                            for v in [v1, v2, v3] {
-                                let key = (v.0, v.1, v.2);
-
-                                let index = if let Some(&i) = vertex_map.get(&key) {
-                                    i
-                                } else {
-                                    let position = obj_to_world
-                                        .mul_vec(Vec3::new(
-                                            obj.vertices[v.0].x as f32,
-                                            obj.vertices[v.0].y as f32,
-                                            obj.vertices[v.0].z as f32,
-                                        ))
-                                        .into_arr();
-
-                                    let tex_coord = if let Some(i) = v.1 {
-                                        [obj.tex_vertices[i].u as f32, obj.tex_vertices[i].v as f32]
-                                    } else {
-                                        [0.0, 0.0]
-                                    };
-
-                                    let normal = if let Some(i) = v.2 {
-                                        obj_to_world
-                                            .mul_vec(Vec3::new(
-                                                obj.normals[i].x as f32,
-                                                obj.normals[i].y as f32,
-                                                obj.normals[i].z as f32,
-                                            ))
-                                            .into_arr()
-                                    } else {
-                                        derived_normal
-                                    };
-
-                                    let vert = ShaderVertVertex {
-                                        position,
-                                        tex_coord,
-                                        normal,
-                                    };
-
-                                    let i = vertices.len() as u32;
-                                    vertices.push(vert);
-                                    vertex_map.insert(key, i);
-                                    i
-                                };
-
-                                indices.push(index);
+                // Build a triangle list (fan triangulation for polygons/quads).
+                let mut triangles = Vec::<(VtnIndex, VtnIndex, VtnIndex)>::new();
+                for primitive in shape.get_primitives() {
+                    match primitive {
+                        Primitive::Triangle { v0, v1, v2 } => triangles.push((*v0, *v1, *v2)),
+                        Primitive::Polygon(poly) => {
+                            if poly.len() < 3 {
+                                continue;
+                            }
+                            let v0 = poly[0];
+                            for i in 1..(poly.len() - 1) {
+                                triangles.push((v0, poly[i], poly[i + 1]));
                             }
                         }
+                        _ => {}
+                    }
+                }
+
+                for (v0, v1, v2) in triangles {
+                    let derived_normal = if derive_normals {
+                        match (v0.vn, v1.vn, v2.vn) {
+                            (None, None, None) => {
+                                let p0 = &objf.vs[v0.v as usize];
+                                let p0 = Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32);
+                                let p1 = &objf.vs[v1.v as usize];
+                                let p1 = Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32);
+                                let p2 = &objf.vs[v2.v as usize];
+                                let p2 = Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32);
+
+                                let face_normal = p1.sub(p2).cross(p2.sub(p0));
+
+                                Some(obj_to_world.mul_vec(face_normal).into_arr())
+                            }
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    let derived_normal = match derived_normal {
+                        Some(n) => n,
+                        None => [0.0, 0.0, 0.0],
+                    };
+
+                    for v in [v0, v1, v2] {
+                        let index = if let Some(&i) = vertex_map.get(&v) {
+                            i
+                        } else {
+                            let position = obj_to_world
+                                .mul_vec(Vec3::new(
+                                    objf.vs[v.v].x as f32,
+                                    objf.vs[v.v].y as f32,
+                                    objf.vs[v.v].z as f32,
+                                ))
+                                .into_arr();
+
+                            let tex_coord = if let Some(i) = v.vt {
+                                [objf.vts[i].u as f32, objf.vts[i].v as f32]
+                            } else {
+                                [0.0, 0.0]
+                            };
+
+                            let normal = if let Some(i) = v.vn {
+                                obj_to_world
+                                    .mul_vec(Vec3::new(
+                                        objf.vns[i].x as f32,
+                                        objf.vns[i].y as f32,
+                                        objf.vns[i].z as f32,
+                                    ))
+                                    .into_arr()
+                            } else {
+                                derived_normal
+                            };
+
+                            let i = vertices.len() as u32;
+                            vertices.push(ShaderVertVertex {
+                                position,
+                                tex_coord,
+                                normal,
+                            });
+                            vertex_map.insert(v, i);
+                            i
+                        };
+
+                        indices.push(index);
                     }
                 }
 
@@ -243,6 +249,10 @@ impl Application {
                 let mut ibs = Vec::<vulkan::IndexBV>::new();
 
                 for (vertices, indices) in object_data.iter() {
+                    if vertices.len() == 0 || indices.len() == 0 {
+                        continue;
+                    }
+
                     let vb_data = unsafe {
                         std::slice::from_raw_parts(
                             vertices.as_ptr() as *const u8,
@@ -677,7 +687,7 @@ impl ApplicationHandler for Application {
                 self.model_transform
                     .position
                     .add(Vec3::ZERO.sub(WORLD_FORWARDS).add(WORLD_UP.scaled(0.5))),
-                WORLD_FORWARDS
+                WORLD_FORWARDS,
             )
         };
         // camera.look_at(self.model_transform.position);
@@ -752,8 +762,8 @@ impl ApplicationHandler for Application {
             ApplicationState::CameraMode => {
                 match event {
                     DeviceEvent::MouseMotion { delta } => {
-                        let dx = -delta.0 * self.mouse_sensitivity;
-                        let dy = -delta.1 * self.mouse_sensitivity;
+                        let dx = delta.0 * self.mouse_sensitivity;
+                        let dy = delta.1 * self.mouse_sensitivity;
 
                         camera.rotate(dx as f32, dy as f32);
                     }
@@ -771,8 +781,7 @@ impl ApplicationHandler for Application {
                         let qx = Quat::unit_from_angle_axis(dx as f32, WORLD_UP);
                         let qy = Quat::unit_from_angle_axis(dy as f32, WORLD_RIGHT);
 
-                        self.model_transform
-                            .rotate_global(qx.mul(qy), self.model_transform.position);
+                        self.model_transform.rotate_local(qx.mul(qy));
                     }
                     _ => {
                         // tracing::info!("Not implemented")

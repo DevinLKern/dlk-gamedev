@@ -306,11 +306,11 @@ mod test {
             Vec3::new(0.0, 3.0, 1.0),
             Vec3::new(4.0, 2.0, 0.0),
         );
-        let c = Mat3::from_rows(
-            Vec3::new(19.0, 20.0, 21.0),
-            Vec3::new(22.0, 23.0, 24.0),
-            Vec3::new(25.0, 26.0, 27.0),
-        );
+        // let c = Mat3::from_rows(
+        //     Vec3::new(19.0, 20.0, 21.0),
+        //     Vec3::new(22.0, 23.0, 24.0),
+        //     Vec3::new(25.0, 26.0, 27.0),
+        // );
 
         assert_eq!(a.inverse(), None);
 
