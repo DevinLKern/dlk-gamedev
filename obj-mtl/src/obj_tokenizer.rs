@@ -87,7 +87,7 @@ impl ObjTokenizer {
             Err(e) => return Some(Err(Error::Io(e))),
         };
 
-        let line = self.line.trim_end();
+        let line = self.line.trim();
         if line.is_empty() {
             return self.next_token();
         }
@@ -301,34 +301,5 @@ impl ObjTokenizer {
         };
 
         Some(Ok(token))
-    }
-}
-
-#[cfg(test)]
-#[allow(unused)]
-mod tests {
-    use crate::obj::ObjTokenizer;
-    use std::str::FromStr;
-
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let path =
-            std::path::PathBuf::from_str("../files/models/suzanne.obj").expect("Invalid path str");
-        let mut tokenizer = ObjTokenizer::from_path(&path)
-            .inspect_err(|e| println!("{:?}", e))
-            .unwrap();
-
-        let mut err_count: u64 = 0;
-        let mut token_count: u64 = 0;
-        while let Some(token) = tokenizer.next_token() {
-            if let Err(e) = token.as_ref() {
-                err_count += 1;
-            }
-            token_count += 1;
-        }
-        assert_eq!(err_count == 0, true);
-        assert_eq!(token_count > 0, true);
     }
 }

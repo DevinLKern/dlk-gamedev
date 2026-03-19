@@ -128,7 +128,7 @@ impl Application {
                 let mut vertex_map = HashMap::<VtnIndex, u32>::new();
 
                 // Build a triangle list (fan triangulation for polygons/quads).
-                let mut triangles = Vec::<(VtnIndex, VtnIndex, VtnIndex)>::new();
+                let mut triangles = Vec::<(VtnIndex, VtnIndex, VtnIndex)>::with_capacity(64);
                 for primitive in shape.get_primitives() {
                     match primitive {
                         Primitive::Triangle { v0, v1, v2 } => triangles.push((*v0, *v1, *v2)),
@@ -149,11 +149,11 @@ impl Application {
                     let derived_normal = if derive_normals {
                         match (v0.vn, v1.vn, v2.vn) {
                             (None, None, None) => {
-                                let p0 = &objf.vs[v0.v as usize];
+                                let p0 = &objf.vs[v0.v];
                                 let p0 = Vec3::new(p0.x as f32, p0.y as f32, p0.z as f32);
-                                let p1 = &objf.vs[v1.v as usize];
+                                let p1 = &objf.vs[v1.v];
                                 let p1 = Vec3::new(p1.x as f32, p1.y as f32, p1.z as f32);
-                                let p2 = &objf.vs[v2.v as usize];
+                                let p2 = &objf.vs[v2.v];
                                 let p2 = Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32);
 
                                 let face_normal = p1.sub(p2).cross(p2.sub(p0));
