@@ -236,9 +236,6 @@ impl ObjTokenizer {
 
                 ObjToken::Shading(s)
             }
-            "p" => {
-                todo!()
-            }
             "vp" => {
                 let mut rest = rest.split_whitespace();
 
@@ -255,45 +252,48 @@ impl ObjTokenizer {
 
                 ObjToken::Vp { u, v, w }
             }
-            "mg" => {
-                todo!()
-            }
-            "sp" => {
-                todo!()
-            }
-            "scrv" => {
-                todo!()
-            }
-            "con" => {
-                todo!()
-            }
-            "parm" => {
-                todo!()
-            }
-            "curv" => {
-                todo!()
-            }
-            "curv2" => {
-                todo!()
-            }
-            "cstype" => {
-                todo!()
-            }
-            "deg" => {
-                todo!()
-            }
-            "surf" => {
-                todo!()
-            }
-            "trim" => {
-                todo!()
-            }
-            "hole" => {
-                todo!()
-            }
-            "end" => {
-                todo!()
-            }
+            // "p" => {
+            //     todo!()
+            // }
+            // "mg" => {
+            //     todo!()
+            // }
+            // "sp" => {
+            //     todo!()
+            // }
+            // "scrv" => {
+            //     todo!()
+            // }
+            // "con" => {
+            //     todo!()
+            // }
+            // "parm" => {
+            //     todo!()
+            // }
+            // "curv" => {
+            //     todo!()
+            // }
+            // "curv2" => {
+            //     todo!()
+            // }
+            // "cstype" => {
+            //     todo!()
+            // }
+            // "deg" => {
+            //     todo!()
+            // }
+            // "surf" => {
+            //     todo!()
+            // }
+            // "trim" => {
+            //     todo!()
+            // }
+            // "hole" => {
+            //     todo!()
+            // }
+            // "end" => {
+            //     todo!()
+            // }
             _ => {
                 // comment or unsupported feature or invalid format. skip it.
                 return self.next_token();

@@ -1,17 +1,9 @@
-use crate::{Error, Result};
+use crate::{Channel, Error, Result};
 
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-
-
-#[allow(unused)]
-#[derive(Debug)]
-pub(crate) enum MmValues {
-    Base,
-    Gain,
-}
 
 #[allow(unused)]
 pub(crate) const IMFCHAN_R: u16 = 1 << 0;
@@ -26,20 +18,46 @@ pub(crate) const IMFCHAN_L: u16 = 1 << 4;
 #[allow(unused)]
 pub(crate) const IMFCHAN_Z: u16 = 1 << 5;
 
+#[derive(Debug)]
+pub(crate) struct Mm {
+    pub(crate) base: f32,
+    pub(crate) gain: f32,
+}
+
 #[allow(unused)]
 #[derive(Debug)]
-pub(crate) enum MtlOption {
-    Bm(f32),
-    Blendu(bool),
-    Blendv(bool),
-    Cc(bool),
-    Clamp(bool),
-    Imfchan(u16),
-    Mm(MmValues),
-    O{u: f32, v: f32, w: f32},
-    S{u: f32, v: f32, w: f32},
-    T{u: f32, v: f32, w: f32},
-    Texres(f32),
+pub(crate) struct MtlOptions {
+    pub(crate) bm: Option<f32>,
+    pub(crate) blendu: Option<bool>,
+    pub(crate) blendv: Option<bool>,
+    pub(crate) cc: Option<bool>,
+    pub(crate) clamp: Option<bool>,
+    pub(crate) imfchan: Option<Channel>,
+    pub(crate) mm: Option<Mm>,
+    pub(crate) o: Option<[f32; 3]>,
+    pub(crate) s: Option<[f32; 3]>,
+    pub(crate) t: Option<[f32; 3]>,
+    pub(crate) texres: Option<u32>,
+    pub(crate) boost: Option<f32>,
+}
+
+impl Default for MtlOptions {
+    fn default() -> Self {
+        Self {
+            bm: None,
+            blendu: None,
+            blendv: None,
+            cc: None,
+            clamp: None,
+            imfchan: None,
+            mm: None,
+            o: None,
+            s: None,
+            t: None,
+            texres: None,
+            boost: None
+        }
+    }
 }
 
 #[allow(unused)]
@@ -49,14 +67,14 @@ pub(crate) enum MtlToken {
     Ka{r: f32, g: f32, b: f32},
     Kd{r: f32, g: f32, b: f32},
     Ks{r: f32, g: f32, b: f32},
-    MapKa{options: Box<[MtlOption]>, file_name: Box<str>},
-    MapKd{options: Box<[MtlOption]>, file_name: Box<str>},
-    MapKs{options: Box<[MtlOption]>, file_name: Box<str>},
+    MapKa{options: MtlOptions, file_name: Box<str>},
+    MapKd{options: MtlOptions, file_name: Box<str>},
+    MapKs{options: MtlOptions, file_name: Box<str>},
     Ns(f32),
+    MapNs{options: MtlOptions, file_name: Box<str>},
     Ni(f32),
     Illum(u32),
-    Bump{options: Box<[MtlOption]>, file_name: Box<str>},
-
+    Bump{options: MtlOptions, file_name: Box<str>},
 }
 
 #[allow(unused)]
@@ -111,15 +129,15 @@ impl MtlTokenizer {
 
         Ok((r, g, b))
     }
-    fn parse_map_args(rest: &str) -> Option<(Box<[MtlOption]>, Box<str>)> {
+    fn parse_map_args(rest: &str) -> Option<(MtlOptions, Box<str>)> {
         let mut i = 0;
 
-        let mut options = Vec::new();
+        let mut options = MtlOptions::default();
 
         while let Some((start, token)) = Self::next_token_as_str(rest, &mut i) {
             if !token.starts_with('-') {
                 let filename = &rest[start..];
-                return Some((options.into_boxed_slice(), filename.into()));
+                return Some((options, filename.into()));
             }
 
             match token {
@@ -127,14 +145,14 @@ impl MtlTokenizer {
                     let (_, bm) = Self::next_token_as_str(rest, &mut i)?;
                     let bm = bm.parse().ok()?;
 
-                    options.push(MtlOption::Bm(bm))
+                    options.bm = Some(bm)
                 }
                 "-blendu" => {
                     let (_, blendu) = Self::next_token_as_str(rest, &mut i)?;
 
                     match blendu {
-                        "on" => options.push(MtlOption::Blendu(true)),
-                        "off" => options.push(MtlOption::Blendu(false)),
+                        "on" => options.blendu = Some(true),
+                        "off" => options.blendu = Some(false),
                         _ => return None
                     }
                 }
@@ -142,8 +160,8 @@ impl MtlTokenizer {
                     let (_, blendv) = Self::next_token_as_str(rest, &mut i)?;
 
                     match blendv {
-                        "on" => options.push(MtlOption::Blendv(true)),
-                        "off" => options.push(MtlOption::Blendv(false)),
+                        "on" => options.blendv = Some(true),
+                        "off" => options.blendv = Some(false),
                         _ => return None
                     }
                 }
@@ -151,8 +169,8 @@ impl MtlTokenizer {
                     let (_, cc) = Self::next_token_as_str(rest, &mut i)?;
 
                     match cc {
-                        "on" => options.push(MtlOption::Cc(true)),
-                        "off" => options.push(MtlOption::Cc(false)),
+                        "on" => options.cc = Some(true),
+                        "off" => options.cc = Some(false),
                         _ => return None
                     }
                 }
@@ -160,59 +178,54 @@ impl MtlTokenizer {
                     let (_, clamp) = Self::next_token_as_str(rest, &mut i)?;
 
                     match clamp {
-                        "on" => options.push(MtlOption::Clamp(true)),
-                        "off" => options.push(MtlOption::Clamp(false)),
+                        "on" => options.clamp = Some(true),
+                        "off" => options.clamp = Some(false),
                         _ => return None
                     }
                 }
                 "-imfchan" => {
                     let (_, channel) = Self::next_token_as_str(rest, &mut i)?;
+                    let channel = Channel::from_str(channel)?;
 
-                    let channel = match channel {
-                        "r" | "R" => IMFCHAN_R,
-                        "g" | "G" => IMFCHAN_G,
-                        "b" | "B" => IMFCHAN_B,
-                        "m" | "M" => IMFCHAN_M,
-                        "z" | "Z" => IMFCHAN_Z,
-                        "l" | "L" => IMFCHAN_L,
-                        _ => return None
-                    };
-
-                    options.push(MtlOption::Imfchan(channel));
+                    options.imfchan = Some(channel);
                 }
                 "-mm" => {
-                    let (_, clamp) = Self::next_token_as_str(rest, &mut i)?;
+                    let (_, base) = Self::next_token_as_str(rest, &mut i)?;
+                    let base = base.parse().ok()?;
 
-                    match clamp {
-                        "base" => options.push(MtlOption::Mm(MmValues::Base)),
-                        "gain" => options.push(MtlOption::Mm(MmValues::Gain)),
-                        _ => return None
-                    }
+                    let (_, gain) = Self::next_token_as_str(rest, &mut i)?;
+                    let gain = gain.parse().ok()?;
+
+                    options.mm = Some(Mm{ base, gain })
                 }
                 "-o" => {
                     let (u, v, w) = Self::parse_v3(rest, &mut i).ok()?;
-
-                    options.push(MtlOption::O { u, v, w })
+                    options.o = Some([ u, v, w ])
                 }
                 "-s" => {
                     let (u, v, w) = Self::parse_v3(rest, &mut i).ok()?;
-
-                    options.push(MtlOption::S { u, v, w })
+                    options.s = Some([ u, v, w ]);
                 }
                 "-t" => {
                     let (u, v, w) = Self::parse_v3(rest, &mut i).ok()?;
-
-                    options.push(MtlOption::T { u, v, w })
+                    options.t = Some([ u, v, w ]);
                 }
                 "-texres" => {
                     let (_, texres) = Self::next_token_as_str(rest, &mut i)?;
                     let texres = texres.parse().ok()?;
 
-                    options.push(MtlOption::Texres(texres))
+                    options.texres = Some(texres);
+                }
+                "-boost" => {
+                    let (_, boost) = Self::next_token_as_str(rest, &mut i)?;
+                    let boost = boost.parse().ok()?;
+
+                    options.boost = Some(boost);
                 }
                 _ => {
                     let filename = &rest[start..];
-                    return Some((options.into_boxed_slice(), filename.into()));
+
+                    return Some((options, filename.into()));
                 }
             }
         }
@@ -288,10 +301,10 @@ impl MtlTokenizer {
             "map_Ns" => {
                 let (options, file_name) = match Self::parse_map_args(rest) {
                     Some(res) => res,
-                    None => return Some(Err(Error::Parse("map_Ks parse error")))
+                    None => return Some(Err(Error::Parse("map_Ns parse error")))
                 };
 
-                MtlToken::MapKs { options, file_name }
+                MtlToken::MapNs { options, file_name }
             },
             "Ns" => {
                 let ns = match rest.trim().parse::<f32>() {
