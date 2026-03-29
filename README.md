@@ -1,4 +1,4 @@
-# dlk-gamedev
+# dlk-model-viewer
 
 Experiments for learning Vulkan, graphics programming, and game development.
 
@@ -83,14 +83,14 @@ cargo install cargo-deb
 Open an OBJ model:
 
 ```bash
-dlk-objviewer model.obj
+dlk-model-viewer model.obj
 ```
 
 ---
 
 ## Nemo File Manager Integration
 
-You can add a **right-click action** in the Nemo file manager to open `.obj` files with `dlk-objviewer`.
+You can add a **right-click action** in the Nemo file manager to open `.` files with `dlk-model-viewer`.
 
 Create the following file:
 
@@ -103,7 +103,7 @@ With the following contents:
 ```
 [Nemo Action]
 Name=View obj model
-Comment=Open obj model with dlk-objviewer
+Comment=Open obj model with dlk-model-viewer
 Exec=dlk-objviewer -f +z -u +y -r +x %F
 Icon-Name=applications-graphics
 Selection=s
