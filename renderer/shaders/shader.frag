@@ -2,18 +2,13 @@
 
 #extension GL_EXT_nonuniform_qualifier : enable
 
-const uint MESH_FLAG_TEXTURED_BIT = (1 << 0);
+const uint MATERIAL_FLAG_TEXTURED_BIT = (1 << 0);
 
 // set 1 is for objects that are update every object
 layout(std140, set = 1, binding = 0) uniform MeshUBO {
     mat4 model;
-    vec4 base_color;
-    uint flags;
+    uint material_index;
 } mesh;
-
-layout(std140, set = 1, binding = 1) uniform MaterialUBO {
-    uint texture_index;
-} material;
 
 // set 2 is for objects that are updated irregularly
 layout(std140, set = 2, binding = 0) uniform GlobalLightUBO {
@@ -22,7 +17,20 @@ layout(std140, set = 2, binding = 0) uniform GlobalLightUBO {
     float ambient;
 } world_light;
 
+
 layout (set = 2, binding = 1) uniform sampler2D global_textures[];
+
+struct MaterialUBO {
+    uint flags;
+    uint texture_index;
+    vec4 base_color;
+};
+
+#define MAX_MATERIALS 32
+
+layout(std140, set = 2, binding = 2) buffer MaterialsUBO {
+    MaterialUBO materials [MAX_MATERIALS];
+};
 
 // layout (location = 0) in vec3 vColor;
 layout (location = 0) in vec2 v_tex_coord;
@@ -35,11 +43,12 @@ void main() {
     // This only works when the scale is uniform. Right now it is.
     vec3 normal_world_space = normalize(mat3(mesh.model) * v_normal);
     float light_intensity = world_light.ambient + max(0.0, dot(normal_world_space, -world_light.direction));
- 
-    if ((mesh.flags & MESH_FLAG_TEXTURED_BIT) != 0) {
-        // what does nonuniformEXT do?
-        f_color = texture(global_textures[nonuniformEXT(material.texture_index)], v_tex_coord) * light_intensity;
+    
+    MaterialUBO mat = materials[nonuniformEXT(mesh.material_index)];
+    
+    if ((mat.flags & MATERIAL_FLAG_TEXTURED_BIT) != 0) {
+        f_color = texture(global_textures[nonuniformEXT(mat.texture_index)], v_tex_coord) * light_intensity;
     } else {
-        f_color = mesh.base_color * light_intensity;
+        f_color = mat.base_color * light_intensity;
     }
 }

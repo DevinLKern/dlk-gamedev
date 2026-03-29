@@ -13,24 +13,533 @@ use ash::vk;
 use std::rc::Rc;
 use vulkan::device::SharedDeviceRef;
 
+use crate::render_context::MAX_FRAME_COUNT;
+
+unsafe extern "system" fn vulkan_debug_callback(
+    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
+    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
+    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
+    _user_data: *mut std::os::raw::c_void,
+) -> vk::Bool32 {
+    let callback_data = unsafe { *p_callback_data };
+    let message_id_number = callback_data.message_id_number;
+
+    let message_id_name = if callback_data.p_message_id_name.is_null() {
+        std::borrow::Cow::from("")
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy() }
+    };
+
+    let message = if callback_data.p_message.is_null() {
+        std::borrow::Cow::from("")
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy() }
+    };
+
+    let message = format!("{message_type:?} [{message_id_name} ({message_id_number})] : {message}");
+
+    if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
+        tracing::error!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
+        tracing::warn!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {
+        tracing::info!(message);
+    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE) {
+        tracing::trace!(message);
+    }
+
+    vk::FALSE
+}
+
+pub const MAX_CONTEXTS: u32 = 1;
+pub const MAX_TEXTURES: u32 = 16;
+pub const MAX_MATERIALS: u32 = 32;
+
+// use crate::render_context::MAX_TEXTURES;
+
+#[allow(dead_code)]
 pub struct Renderer {
-    device: SharedDeviceRef,
+    pub device: SharedDeviceRef,
+    pub pipeline_layout: Rc<vulkan::PipelineLayout>,
     command_pool: vk::CommandPool,
-    sampler: vk::Sampler,
+    descriptor_pool: vk::DescriptorPool,
+    per_frame_ds_layout: vk::DescriptorSetLayout,
+    per_obj_ds_layout: vk::DescriptorSetLayout,
+    other_ds_layout: vk::DescriptorSetLayout,
+    pub descriptor_sets: Box<[vk::DescriptorSet]>,
+    pub model_transform_buffer_element_size: u64,
+    pub model_transform_buffer: vulkan::Buffer,
+    global_light_buffer: vulkan::Buffer,
+    textures: Box<[vulkan::Image]>,
+    material_buffer: vulkan::Buffer,
+    repeat_sampler: vk::Sampler,
 }
 
 impl Renderer {
-    pub fn new(device: SharedDeviceRef) -> result::Result<Renderer> {
+    pub fn new(
+        debug_enabled: bool,
+        display_handle: &winit::raw_window_handle::DisplayHandle,
+        model_transform_count: u64,
+        texture_data: &[image::DynamicImage],
+        material_data: &[crate::MaterialUBO],
+    ) -> result::Result<Renderer> {
+        let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
+        let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
+
         let command_pool = {
             let command_pool_create_info = vk::CommandPoolCreateInfo {
                 queue_family_index: device.get_queue_family_index(),
                 ..Default::default()
             };
 
-            unsafe { device.create_command_pool(&command_pool_create_info) }?
+            unsafe { device.create_command_pool(&command_pool_create_info) }
+                .inspect_err(|e| tracing::error!("{e}"))?
         };
 
-        let sampler = {
+        let mut textures = Vec::<vulkan::Image>::with_capacity(texture_data.len());
+        for data in texture_data {
+            use image::GenericImageView;
+
+            let (width, height) = data.dimensions();
+            let rgba = data.clone().into_rgba8();
+            let data = rgba.as_raw();
+            let size = data.len() as u64;
+
+            let image = {
+                let image_create_info = vulkan::ImageCreateInfo {
+                    memory_property_flags: vk::MemoryPropertyFlags::DEVICE_LOCAL,
+                    mip_levels: 1,
+                    image_type: vk::ImageType::TYPE_2D,
+                    format: vk::Format::R8G8B8A8_SRGB,
+                    width,
+                    height,
+                    depth: 1,
+                    usage: vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::SAMPLED,
+                    array_layers: 1,
+                };
+
+                vulkan::Image::new(device.clone(), &image_create_info)?
+            };
+
+            let transfer_buffer = {
+                let create_info = vulkan::BufferCreateInfo {
+                    size: size,
+                    usage: vk::BufferUsageFlags::TRANSFER_SRC,
+                    memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                        | vk::MemoryPropertyFlags::HOST_COHERENT,
+                };
+
+                vulkan::Buffer::new(device.clone(), &create_info)
+                    .inspect_err(|e| tracing::error!("{}", e))?
+            };
+
+            unsafe {
+                let dst = transfer_buffer.map_memory(0, size)?;
+
+                std::ptr::copy_nonoverlapping(data.as_ptr(), dst as *mut u8, size as usize);
+
+                transfer_buffer.unmap();
+            }
+
+            let command_buffer = {
+                let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
+                    command_pool,
+                    command_buffer_count: 1,
+                    level: vk::CommandBufferLevel::PRIMARY,
+                    ..Default::default()
+                };
+
+                let command_buffers =
+                    unsafe { device.allocate_command_buffers(&command_buffer_allocate_info) }?;
+
+                command_buffers[0]
+            };
+
+            {
+                let begin_info = vk::CommandBufferBeginInfo {
+                    flags: vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT,
+                    ..Default::default()
+                };
+
+                unsafe { device.begin_command_buffer(command_buffer, &begin_info) }?
+            }
+
+            // transfer commands here
+            {
+                // to I need the stage mask here?
+                let barriers = [vk::ImageMemoryBarrier2 {
+                    image: image.handle,
+                    old_layout: vk::ImageLayout::UNDEFINED,
+                    new_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    src_stage_mask: vk::PipelineStageFlags2::TOP_OF_PIPE,
+                    dst_stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                    src_access_mask: vk::AccessFlags2::NONE,
+                    dst_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                    ..Default::default()
+                }];
+
+                let dependency_info = vk::DependencyInfo {
+                    image_memory_barrier_count: barriers.len() as u32,
+                    p_image_memory_barriers: barriers.as_ptr(),
+                    ..Default::default()
+                };
+
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
+
+                let regions = [vk::BufferImageCopy2 {
+                    buffer_offset: 0,
+                    buffer_row_length: 0,
+                    buffer_image_height: 0,
+                    image_subresource: vk::ImageSubresourceLayers {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        mip_level: 0,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    image_offset: vk::Offset3D { x: 0, y: 0, z: 0 },
+                    image_extent: vk::Extent3D {
+                        width: image.width,
+                        height: image.height,
+                        depth: image.depth,
+                    },
+                    ..Default::default()
+                }];
+
+                let copy_buffer_to_image_info = vk::CopyBufferToImageInfo2 {
+                    src_buffer: transfer_buffer.handle,
+                    dst_image: image.handle,
+                    dst_image_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    region_count: regions.len() as u32,
+                    p_regions: regions.as_ptr(),
+                    ..Default::default()
+                };
+
+                unsafe {
+                    device.cmd_copy_buffer_to_image2(command_buffer, &copy_buffer_to_image_info)
+                };
+
+                let barriers = [vk::ImageMemoryBarrier2 {
+                    image: image.handle,
+                    old_layout: vk::ImageLayout::TRANSFER_DST_OPTIMAL,
+                    new_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    src_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    dst_queue_family_index: vk::QUEUE_FAMILY_IGNORED,
+                    subresource_range: vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    },
+                    src_stage_mask: vk::PipelineStageFlags2::TRANSFER,
+                    dst_stage_mask: vk::PipelineStageFlags2::FRAGMENT_SHADER,
+                    src_access_mask: vk::AccessFlags2::TRANSFER_WRITE,
+                    dst_access_mask: vk::AccessFlags2::SHADER_READ,
+                    ..Default::default()
+                }];
+
+                let dependency_info = vk::DependencyInfo {
+                    image_memory_barrier_count: barriers.len() as u32,
+                    p_image_memory_barriers: barriers.as_ptr(),
+                    ..Default::default()
+                };
+
+                unsafe { device.cmd_pipeline_barrier2(command_buffer, &dependency_info) };
+            }
+
+            unsafe {
+                device.end_command_buffer(command_buffer)?;
+
+                let submit_info = [vk::SubmitInfo {
+                    command_buffer_count: 1,
+                    p_command_buffers: &command_buffer,
+                    ..Default::default()
+                }];
+
+                device.queue_submit(device.queue, &submit_info, vk::Fence::null())?;
+                device.device_wait_idle()?;
+                device.free_command_buffers(command_pool, &[command_buffer]);
+            }
+
+            textures.push(image);
+        }
+
+        let (model_transform_buffer, model_transform_buffer_element_size) = {
+            let element_size = {
+                let ubo_size = std::mem::size_of::<crate::MeshUBO>();
+
+                let properties = unsafe { device.get_physical_device_properties() };
+
+                ubo_size.next_multiple_of(
+                    properties.limits.min_uniform_buffer_offset_alignment as usize,
+                )
+            };
+
+            let model_transform_buffer_create_info = vulkan::BufferCreateInfo {
+                size: element_size as u64 * model_transform_count,
+                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+            };
+
+            let buffer = vulkan::Buffer::new(device.clone(), &model_transform_buffer_create_info)?;
+
+            (buffer, element_size)
+        };
+
+        let global_light_buffer = {
+            let buffer_size = {
+                let ubo_size = std::mem::size_of::<crate::GlobalLightUBO>();
+
+                let properties = unsafe { device.get_physical_device_properties() };
+
+                ubo_size.next_multiple_of(
+                    properties.limits.min_uniform_buffer_offset_alignment as usize,
+                )
+            };
+
+            let global_light_buffer_create_info = vulkan::BufferCreateInfo {
+                size: buffer_size as u64,
+                usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+            };
+
+            vulkan::Buffer::new(device.clone(), &global_light_buffer_create_info)?
+        };
+
+        let material_buffer = {
+            let element_size = {
+                let es = std::mem::size_of::<crate::MaterialUBO>();
+
+                let properties = unsafe { device.get_physical_device_properties() };
+
+                es.next_multiple_of(properties.limits.min_storage_buffer_offset_alignment as usize)
+            };
+
+            let buffer_create_info = vulkan::BufferCreateInfo {
+                size: (element_size * material_data.len()) as u64,
+                usage: vk::BufferUsageFlags::STORAGE_BUFFER,
+                memory_property_flags: vk::MemoryPropertyFlags::HOST_VISIBLE
+                    | vk::MemoryPropertyFlags::HOST_COHERENT,
+            };
+
+            let buffer = vulkan::Buffer::new(device.clone(), &buffer_create_info)?;
+            for (i, material) in material_data.iter().enumerate() {
+                let offset = element_size * i;
+
+                unsafe {
+                    let dst = buffer.map_memory(offset as u64, element_size as u64)?;
+                    let src = material;
+                    std::ptr::copy_nonoverlapping(src, dst as *mut crate::MaterialUBO, 1);
+                    buffer.unmap();
+                }
+            }
+
+            buffer
+        };
+
+        let ds_layout_bindings: &[&[vk::DescriptorSetLayoutBinding]] = &[
+            // SET 0 - per frame (update in render_context.rs)
+            &[vk::DescriptorSetLayoutBinding {
+                binding: 0,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::VERTEX,
+                ..Default::default()
+            }],
+            // SET 1 - per obj
+            &[vk::DescriptorSetLayoutBinding {
+                binding: 0,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                descriptor_count: 1,
+                stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
+                p_immutable_samplers: std::ptr::null(),
+                _marker: std::marker::PhantomData {},
+            }],
+            // SET 2 - irregular updates
+            &[
+                //
+                vk::DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: std::marker::PhantomData {},
+                },
+                // global_textures
+                vk::DescriptorSetLayoutBinding {
+                    binding: 1,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    descriptor_count: textures.len() as u32,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: std::marker::PhantomData {},
+                },
+                // materials
+                vk::DescriptorSetLayoutBinding {
+                    binding: 2,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: vk::ShaderStageFlags::FRAGMENT,
+                    p_immutable_samplers: std::ptr::null(),
+                    _marker: std::marker::PhantomData {},
+                },
+            ],
+        ];
+        let pipeline_layout = Rc::new(vulkan::PipelineLayout::new(
+            device.clone(),
+            ds_layout_bindings,
+        )?);
+
+        let descriptor_pool = {
+            let pool_sizes = [
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: MAX_MATERIALS,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    descriptor_count: MAX_TEXTURES,
+                },
+                vk::DescriptorPoolSize {
+                    ty: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    descriptor_count: 2,
+                },
+            ];
+            let descrptor_pool_create_info = vk::DescriptorPoolCreateInfo {
+                max_sets: crate::MAX_FRAME_COUNT as u32 + MAX_MATERIALS + 1,
+                pool_size_count: pool_sizes.len() as u32,
+                p_pool_sizes: pool_sizes.as_ptr(),
+                ..Default::default()
+            };
+
+            unsafe { device.create_descriptor_pool(&descrptor_pool_create_info) }.inspect_err(
+                |e| {
+                    unsafe {
+                        device.destroy_command_pool(command_pool);
+                    }
+                    tracing::error!("{e}")
+                },
+            )?
+        };
+
+        let per_frame_ds_layout = {
+            // 0 == per frame index
+            let ds_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+                binding_count: ds_layout_bindings[0].len() as u32,
+                p_bindings: ds_layout_bindings[0].as_ptr(),
+                ..Default::default()
+            };
+
+            unsafe { device.create_descriptor_set_layout(&ds_layout_create_info) }.inspect_err(
+                |e| {
+                    tracing::error!("{e}");
+                    unsafe {
+                        device.destroy_command_pool(command_pool);
+                    }
+                    unsafe {
+                        device.destroy_descriptor_pool(descriptor_pool);
+                    }
+                },
+            )?
+        };
+
+        let per_obj_ds_layout = {
+            // 1 == per obj index
+            let ds_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+                binding_count: ds_layout_bindings[1].len() as u32,
+                p_bindings: ds_layout_bindings[1].as_ptr(),
+                ..Default::default()
+            };
+
+            unsafe { device.create_descriptor_set_layout(&ds_layout_create_info) }.inspect_err(
+                |e| {
+                    tracing::error!("{e}");
+                    unsafe {
+                        device.destroy_descriptor_set_layout(per_frame_ds_layout);
+                    }
+                    unsafe {
+                        device.destroy_command_pool(command_pool);
+                    }
+                    unsafe {
+                        device.destroy_descriptor_pool(descriptor_pool);
+                    }
+                },
+            )?
+        };
+
+        let other_ds_layout = {
+            // 2 == other index
+            let ds_layout_create_info = vk::DescriptorSetLayoutCreateInfo {
+                binding_count: ds_layout_bindings[2].len() as u32,
+                p_bindings: ds_layout_bindings[2].as_ptr(),
+                ..Default::default()
+            };
+
+            unsafe { device.create_descriptor_set_layout(&ds_layout_create_info) }.inspect_err(
+                |e| {
+                    tracing::error!("{e}");
+                    unsafe {
+                        device.destroy_descriptor_set_layout(per_obj_ds_layout);
+                    }
+                    unsafe {
+                        device.destroy_descriptor_set_layout(per_frame_ds_layout);
+                    }
+                    unsafe {
+                        device.destroy_command_pool(command_pool);
+                    }
+                    unsafe {
+                        device.destroy_descriptor_pool(descriptor_pool);
+                    }
+                },
+            )?
+        };
+
+        let descriptor_sets = {
+            let ds_layouts = [per_frame_ds_layout, per_obj_ds_layout, other_ds_layout];
+            let ds_create_info = vk::DescriptorSetAllocateInfo {
+                descriptor_pool,
+                descriptor_set_count: ds_layouts.len() as u32,
+                p_set_layouts: ds_layouts.as_ptr(),
+                ..Default::default()
+            };
+
+            unsafe { device.allocate_descriptor_sets(&ds_create_info) }.inspect_err(|e| {
+                tracing::error!("{e}");
+                unsafe {
+                    device.destroy_descriptor_set_layout(per_obj_ds_layout);
+                }
+                unsafe {
+                    device.destroy_descriptor_set_layout(per_frame_ds_layout);
+                }
+                unsafe {
+                    device.destroy_descriptor_set_layout(other_ds_layout);
+                }
+                unsafe {
+                    device.destroy_command_pool(command_pool);
+                }
+                unsafe {
+                    device.destroy_descriptor_pool(descriptor_pool);
+                }
+            })?
+        };
+
+        let repeat_sampler = {
             let properties = unsafe { device.get_physical_device_properties() };
             let sampler_create_info = vk::SamplerCreateInfo {
                 mag_filter: vk::Filter::LINEAR,
@@ -47,20 +556,142 @@ impl Renderer {
                 ..Default::default()
             };
 
-            unsafe {
-                device
-                    .create_sampler(&sampler_create_info)
-                    .inspect_err(|_| {
-                        device.destroy_command_pool(command_pool);
-                    })?
-            }
+            unsafe { device.create_sampler(&sampler_create_info) }.inspect_err(|e| {
+                tracing::error!("{e}");
+                unsafe {
+                    device.destroy_descriptor_set_layout(per_obj_ds_layout);
+                }
+                unsafe {
+                    device.destroy_descriptor_set_layout(per_frame_ds_layout);
+                }
+                unsafe {
+                    device.destroy_descriptor_set_layout(other_ds_layout);
+                }
+                unsafe {
+                    device.destroy_command_pool(command_pool);
+                }
+                unsafe {
+                    device.destroy_descriptor_pool(descriptor_pool);
+                }
+            })?
         };
+
+        {
+            let per_obj_descriptor_set_info = vk::DescriptorBufferInfo {
+                buffer: model_transform_buffer.handle,
+                offset: 0,
+                range: model_transform_buffer_element_size as u64,
+            };
+            let global_light_buffer_info = vk::DescriptorBufferInfo {
+                buffer: global_light_buffer.handle,
+                offset: 0,
+                range: global_light_buffer.size,
+            };
+
+            let image_infos: Box<[vk::DescriptorImageInfo]> = textures
+                .iter()
+                .map(|img| vk::DescriptorImageInfo {
+                    sampler: repeat_sampler,
+                    image_view: img.view,
+                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                })
+                .collect();
+
+            let material_buffer_info = vk::DescriptorBufferInfo {
+                buffer: material_buffer.handle,
+                offset: 0,
+                range: material_buffer.size,
+            };
+
+            let writes = vec![
+                // set 0 updated in render_context.rs
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_sets[1],
+                    dst_binding: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                    p_buffer_info: &per_obj_descriptor_set_info,
+                    ..Default::default()
+                },
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_sets[2],
+                    dst_binding: 0,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
+                    p_buffer_info: &global_light_buffer_info,
+                    ..Default::default()
+                },
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_sets[2],
+                    dst_binding: 1,
+                    descriptor_count: image_infos.len() as u32,
+                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
+                    p_image_info: image_infos.as_ptr(),
+                    ..Default::default()
+                },
+                vk::WriteDescriptorSet {
+                    dst_set: descriptor_sets[2],
+                    dst_binding: 2,
+                    descriptor_count: 1,
+                    descriptor_type: vk::DescriptorType::STORAGE_BUFFER,
+                    p_buffer_info: &material_buffer_info,
+                    ..Default::default()
+                },
+            ];
+
+            unsafe { device.update_descriptor_sets(&writes, &[]) };
+        }
 
         Ok(Renderer {
             device,
+            pipeline_layout,
             command_pool,
-            sampler,
+            descriptor_pool,
+            per_frame_ds_layout,
+            per_obj_ds_layout,
+            other_ds_layout,
+            descriptor_sets: descriptor_sets.into_boxed_slice(),
+            model_transform_buffer_element_size: model_transform_buffer_element_size as u64,
+            model_transform_buffer,
+            global_light_buffer,
+            textures: textures.into_boxed_slice(),
+            material_buffer,
+            repeat_sampler,
         })
+    }
+    pub fn create_render_context(&self, window: &winit::window::Window) -> Result<RenderContext> {
+        RenderContext::new(
+            self.device.clone(),
+            self.pipeline_layout.clone(),
+            window,
+            self.descriptor_sets[0],
+        )
+    }
+    pub fn update_world_light(
+        &self,
+        ambient: f32,
+        dir: math::Vec3<f32>,
+        color: math::Vec4<f32>,
+    ) -> Result<()> {
+        let ubo = crate::GlobalLightUBO {
+            direction: dir.as_arr(),
+            _pad1: [0; 4],
+            color: color.as_arr(),
+            ambient,
+        };
+
+        unsafe {
+            let dst = self
+                .global_light_buffer
+                .map_memory(0, std::mem::size_of::<crate::GlobalLightUBO>() as u64)?;
+            let src = &ubo;
+
+            std::ptr::copy_nonoverlapping(src, dst as *mut crate::GlobalLightUBO, 1);
+
+            self.global_light_buffer.unmap();
+        }
+
+        Ok(())
     }
     fn get_transfer_buffer(&self, size: u64) -> result::Result<vulkan::Buffer> {
         let create_info = vulkan::BufferCreateInfo {
@@ -74,374 +705,6 @@ impl Renderer {
             .inspect_err(|e| tracing::error!("{}", e))?;
 
         Ok(buffer)
-    }
-    #[inline]
-    pub fn create_render_context(
-        &self,
-        camera: &crate::CameraUBO,
-        objects: &[(crate::MeshUBO, crate::MaterialUBO)],
-        light: &crate::GlobalLightUBO,
-        window: &winit::window::Window,
-        images: Rc<[vulkan::Image]>,
-    ) -> result::Result<RenderContext> {
-        let pipeline_layout = {
-            let set_bindings: &[&[vk::DescriptorSetLayoutBinding]] = &[
-                // SET 0
-                &[vk::DescriptorSetLayoutBinding {
-                    binding: 0,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 1,
-                    stage_flags: vk::ShaderStageFlags::VERTEX,
-                    ..Default::default()
-                }],
-                // SET 1
-                &[
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 0,
-                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    },
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 1,
-                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    },
-                ],
-                // SET 2
-                &[
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 0,
-                        descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                        descriptor_count: 1,
-                        stage_flags: vk::ShaderStageFlags::VERTEX | vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    },
-                    vk::DescriptorSetLayoutBinding {
-                        binding: 1,
-                        descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                        descriptor_count: images.len() as u32,
-                        stage_flags: vk::ShaderStageFlags::FRAGMENT,
-                        ..Default::default()
-                    },
-                ],
-            ];
-
-            Rc::new(vulkan::PipelineLayout::new(
-                self.device.clone(),
-                set_bindings,
-            )?)
-        };
-
-        let per_frame_ds_index = 0;
-        let per_obj_ds_index = 1;
-        let other_ds_index = 2;
-
-        let (per_frame_descriptor_sets, per_obj_descriptor_set, other_descriptor_set) = {
-            let all_layouts = pipeline_layout.get_set_layouts();
-
-            let descriptor_pool = {
-                let mut pool_sizes = std::collections::HashMap::<vk::DescriptorType, u32>::new();
-                for l in all_layouts.iter() {
-                    let count = if l.set == per_frame_ds_index { 3 } else { 1 };
-                    for b in l.bindings.iter() {
-                        if let Some(c) = pool_sizes.get_mut(&b.descriptor_type) {
-                            *c += count * b.descriptor_count;
-                        } else {
-                            pool_sizes.insert(b.descriptor_type, count * b.descriptor_count);
-                        }
-                    }
-                }
-                let pool_sizes: Box<[vk::DescriptorPoolSize]> = pool_sizes
-                    .iter()
-                    .map(|(k, v)| vk::DescriptorPoolSize {
-                        ty: *k,
-                        descriptor_count: *v,
-                    })
-                    .collect();
-
-                let pool_create_info = vk::DescriptorPoolCreateInfo {
-                    max_sets: (all_layouts.len() + 3) as u32,
-                    pool_size_count: pool_sizes.len() as u32,
-                    p_pool_sizes: pool_sizes.as_ptr(),
-                    ..Default::default()
-                };
-
-                Rc::new(vulkan::DescriptorPool::new(
-                    self.device.clone(),
-                    &pool_create_info,
-                )?)
-            };
-
-            let per_frame_descriptor_sets = {
-                let mut sets = Vec::new();
-                for _ in (0..3).into_iter() {
-                    let s = vulkan::DescriptorSet::allocate(
-                        self.device.clone(),
-                        descriptor_pool.clone(),
-                        per_frame_ds_index,
-                        pipeline_layout.clone(),
-                    )?;
-                    sets.push(s);
-                }
-                sets.into_boxed_slice()
-            };
-            let per_obj_descriptor_set = {
-                vulkan::DescriptorSet::allocate(
-                    self.device.clone(),
-                    descriptor_pool.clone(),
-                    per_obj_ds_index,
-                    pipeline_layout.clone(),
-                )
-                .inspect_err(|e| tracing::error!("{}", e))?
-            };
-            let other_descriptor_set = {
-                vulkan::DescriptorSet::allocate(
-                    self.device.clone(),
-                    descriptor_pool.clone(),
-                    other_ds_index,
-                    pipeline_layout.clone(),
-                )
-                .inspect_err(|e| tracing::error!("{}", e))?
-            };
-
-            (
-                per_frame_descriptor_sets,
-                per_obj_descriptor_set,
-                other_descriptor_set,
-            )
-        };
-
-        let per_frame_uniform_buffer_size = {
-            let obj1 = std::mem::size_of::<crate::CameraUBO>() as u64;
-
-            let alignment = unsafe {
-                let properties = self.device.get_physical_device_properties();
-                properties.limits.min_uniform_buffer_offset_alignment
-            };
-
-            obj1.next_multiple_of(alignment)
-        };
-        let (mesh_offset, material_offset, per_obj_uniform_buffer_size) = {
-            let alignment = unsafe {
-                let properties = self.device.get_physical_device_properties();
-                properties.limits.min_uniform_buffer_offset_alignment
-            };
-
-            let mesh_offset = 0;
-
-            let material_offset =
-                (mesh_offset + size_of::<MeshUBO>() as u64).next_multiple_of(alignment);
-
-            let block_size =
-                (material_offset + size_of::<MaterialUBO>() as u64).next_multiple_of(alignment);
-
-            (mesh_offset, material_offset, block_size)
-        };
-        let other_uniform_buffer_size = {
-            let obj1 = std::mem::size_of::<crate::GlobalLightUBO>() as u64;
-
-            let alignment = unsafe {
-                let properties = self.device.get_physical_device_properties();
-                properties.limits.min_uniform_buffer_offset_alignment
-            };
-
-            obj1.next_multiple_of(alignment)
-        };
-
-        // 3 == maximum number of frames?
-        let per_frame_uniform_buffers = self
-            .create_uniform_buffers(
-                per_frame_uniform_buffer_size,
-                per_frame_descriptor_sets.len() as u64,
-            )
-            .inspect_err(|e| tracing::error!("{e}"))?;
-        for bv in per_frame_uniform_buffers.iter() {
-            unsafe {
-                let dst = bv.buffer.map_memory(bv.offset, bv.size)?;
-                let data = camera;
-
-                std::ptr::copy_nonoverlapping(data, dst as *mut crate::CameraUBO, 1);
-
-                bv.buffer.unmap();
-            }
-        }
-
-        let per_obj_uniform_buffer =
-            self.create_dynamic_uniform_buffer(per_obj_uniform_buffer_size * objects.len() as u64)?;
-        let per_obj_uniform_buffer = Rc::new(per_obj_uniform_buffer);
-        let mut per_obj_uniform_buffers =
-            Vec::<(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)>::new();
-        for (mesh_data, material_data) in objects.iter() {
-            let offset = per_obj_uniform_buffer_size * per_obj_uniform_buffers.len() as u64;
-            let mesh_bv = vulkan::DynamicUniformBV {
-                buffer: per_obj_uniform_buffer.clone(),
-                offset: offset + mesh_offset,
-                size: std::mem::size_of::<crate::MeshUBO>() as u64,
-            };
-            unsafe {
-                let dst = mesh_bv.buffer.map_memory(mesh_bv.offset, mesh_bv.size)?;
-
-                std::ptr::copy_nonoverlapping(mesh_data, dst as *mut crate::MeshUBO, 1);
-
-                mesh_bv.buffer.unmap();
-            }
-
-            let material_bv = vulkan::DynamicUniformBV {
-                buffer: per_obj_uniform_buffer.clone(),
-                offset: offset + material_offset,
-                size: std::mem::size_of::<crate::MaterialUBO>() as u64,
-            };
-            unsafe {
-                let dst = material_bv
-                    .buffer
-                    .map_memory(material_bv.offset, material_bv.size)?;
-
-                std::ptr::copy_nonoverlapping(material_data, dst as *mut crate::MaterialUBO, 1);
-
-                material_bv.buffer.unmap();
-            }
-
-            per_obj_uniform_buffers.push((mesh_bv, material_bv));
-        }
-
-        let other_uniform_buffer = self
-            .create_uniform_buffers(other_uniform_buffer_size, 1)
-            .inspect_err(|e| tracing::error!("{e}"))?;
-        let other_uniform_buffer = other_uniform_buffer.into_iter().next().unwrap();
-        unsafe {
-            let dst = other_uniform_buffer
-                .buffer
-                .map_memory(other_uniform_buffer.offset, other_uniform_buffer.size)?;
-            let data = light;
-
-            std::ptr::copy_nonoverlapping(data, dst as *mut crate::GlobalLightUBO, 1);
-
-            other_uniform_buffer.buffer.unmap();
-        }
-
-        {
-            let mut per_frame_buffer_infos = Vec::new();
-            for bv in per_frame_uniform_buffers.iter() {
-                let info = vk::DescriptorBufferInfo {
-                    buffer: bv.buffer.handle,
-                    offset: 0,
-                    range: bv.size,
-                };
-                per_frame_buffer_infos.push(info);
-            }
-
-            let mut descriptor_writes = Vec::new();
-            for (bi, ds) in per_frame_buffer_infos
-                .iter()
-                .zip(per_frame_descriptor_sets.iter())
-            {
-                descriptor_writes.push(vk::WriteDescriptorSet {
-                    dst_set: ds.handle,
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                    p_buffer_info: bi,
-                    ..Default::default()
-                });
-            }
-
-            let mut per_obj_buffer_infos = Vec::new();
-            for (mesh_bv, material_bv) in per_obj_uniform_buffers.iter() {
-                // TODO: I used to set offset to mesh_bv.offset or material_bv.offset,
-                // but that caused validation errors. I need to research what exactly
-                // offset should be and update my code to reflect that.
-
-                let mesh_info = vk::DescriptorBufferInfo {
-                    buffer: mesh_bv.buffer.handle,
-                    offset: 0,
-                    range: mesh_bv.size,
-                };
-                let material_info = vk::DescriptorBufferInfo {
-                    buffer: material_bv.buffer.handle,
-                    offset: 0,
-                    range: material_bv.size,
-                };
-                per_obj_buffer_infos.push((mesh_info, material_info));
-            }
-            for (mesh_bi, material_bi) in per_obj_buffer_infos.iter() {
-                descriptor_writes.push(vk::WriteDescriptorSet {
-                    dst_set: per_obj_descriptor_set.handle,
-                    dst_binding: 0,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    p_buffer_info: mesh_bi,
-                    ..Default::default()
-                });
-
-                descriptor_writes.push(vk::WriteDescriptorSet {
-                    dst_set: per_obj_descriptor_set.handle,
-                    dst_binding: 1,
-                    dst_array_element: 0,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
-                    p_buffer_info: material_bi,
-                    ..Default::default()
-                });
-            }
-
-            let other_bi = vk::DescriptorBufferInfo {
-                buffer: other_uniform_buffer.buffer.handle,
-                offset: other_uniform_buffer.offset,
-                range: other_uniform_buffer.size,
-            };
-            let image_infos: Box<[vk::DescriptorImageInfo]> = images
-                .iter()
-                .map(|img| vk::DescriptorImageInfo {
-                    sampler: self.sampler,
-                    image_view: img.view,
-                    image_layout: vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL, // TODO: store in image class?
-                })
-                .collect();
-            descriptor_writes.push(vk::WriteDescriptorSet {
-                dst_set: other_descriptor_set.handle,
-                dst_binding: 0,
-                dst_array_element: 0,
-                descriptor_count: 1,
-                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER,
-                p_buffer_info: &other_bi,
-                ..Default::default()
-            });
-            for (index, image_info) in image_infos.iter().enumerate() {
-                descriptor_writes.push(vk::WriteDescriptorSet {
-                    dst_set: other_descriptor_set.handle,
-                    dst_binding: 1,
-                    dst_array_element: index as u32,
-                    descriptor_count: 1,
-                    descriptor_type: vk::DescriptorType::COMBINED_IMAGE_SAMPLER,
-                    p_image_info: image_info,
-                    ..Default::default()
-                });
-            }
-            unsafe { self.device.update_descriptor_sets(&descriptor_writes, &[]) };
-        }
-
-        let per_obj_descriptor_set = Rc::new(per_obj_descriptor_set);
-        let other_descriptor_sets = Box::new([other_descriptor_set]);
-        let other_uniform_buffer = Rc::new(other_uniform_buffer);
-
-        crate::RenderContext::new(
-            self.device.clone(),
-            window,
-            pipeline_layout,
-            per_frame_descriptor_sets,
-            per_obj_descriptor_set,
-            other_descriptor_sets,
-            per_frame_uniform_buffers,
-            per_obj_uniform_buffers.into_boxed_slice(),
-            other_uniform_buffer,
-            images,
-        )
     }
     fn get_command_buffer(&self) -> Result<vk::CommandBuffer> {
         let command_buffer_allocate_info = vk::CommandBufferAllocateInfo {
@@ -781,8 +1044,15 @@ impl Drop for Renderer {
     fn drop(&mut self) {
         unsafe {
             let _ = self.device.device_wait_idle();
+            self.device.destroy_sampler(self.repeat_sampler);
+            self.device
+                .destroy_descriptor_set_layout(self.per_obj_ds_layout);
+            self.device
+                .destroy_descriptor_set_layout(self.per_frame_ds_layout);
+            self.device
+                .destroy_descriptor_set_layout(self.other_ds_layout);
             self.device.destroy_command_pool(self.command_pool);
-            self.device.destroy_sampler(self.sampler);
+            self.device.destroy_descriptor_pool(self.descriptor_pool);
         }
     }
 }

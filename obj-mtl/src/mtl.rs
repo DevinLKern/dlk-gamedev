@@ -19,7 +19,7 @@ impl Channel {
             "m" | "M" => Self::Matte,
             "l" | "L" => Self::Luminance,
             "z" | "Z" => Self::Depth,
-            _ => return None
+            _ => return None,
         };
 
         Some(channel)
@@ -55,7 +55,7 @@ impl IllumModel {
             8 => Self::ReflectionRaster,
             9 => Self::GlassTransparencyRaster,
             10 => Self::ShadowCastsOnInvisible,
-            _ => return None
+            _ => return None,
         };
 
         Some(illum)
@@ -65,25 +65,25 @@ impl IllumModel {
 #[allow(unused)]
 #[derive(Debug)]
 pub struct Texture {
-    file_path: Box<str>,
+    pub file_path: Box<str>,
     // specified with -o
-    offset: [f32; 3],
+    pub offset: [f32; 3],
     // specified with -s
-    scale: [f32; 3],
+    pub scale: [f32; 3],
     // specidied with -t
-    turbulence: [f32; 3],
+    pub turbulence: [f32; 3],
     // specified with -mm base option. defaults to 0.0
-    brightness: f32,
+    pub brightness: f32,
     // specified with -mm gain option. defaults to 1.0
-    contrast: f32,
+    pub contrast: f32,
     // specified with -bm option.
-    bump_multiplier: f32,
-    blend_v: bool,
-    blend_u: bool,
-    clamp: bool,
+    pub bump_multiplier: f32,
+    pub blend_v: bool,
+    pub blend_u: bool,
+    pub clamp: bool,
     // specified with texres. Defaults to 1.0
-    resolution: u32,
-    imfchan: Channel,
+    pub resolution: u32,
+    pub imfchan: Channel,
 }
 
 impl Default for Texture {
@@ -107,16 +107,16 @@ impl Default for Texture {
 
 #[allow(unused)]
 #[derive(Debug)]
-struct TexturedValue<T> {
-    color: Option<T>,
-    texture: Option<Texture>,
+pub struct TexturedValue<T> {
+    pub color: Option<T>,
+    pub texture: Option<Texture>,
 }
 
 impl<T> Default for TexturedValue<T> {
     fn default() -> Self {
         Self {
             color: None,
-            texture: None
+            texture: None,
         }
     }
 }
@@ -124,23 +124,23 @@ impl<T> Default for TexturedValue<T> {
 #[allow(unused)]
 #[derive(Debug)]
 pub struct MtlMaterial {
-    name: Box<str>,
+    pub name: Box<str>,
 
-    ambient: TexturedValue<[f32; 3]>,
-    diffuse: TexturedValue<[f32; 3]>,
-    specular: TexturedValue<[f32; 3]>,
+    pub ambient: TexturedValue<[f32; 3]>,
+    pub diffuse: TexturedValue<[f32; 3]>,
+    pub specular: TexturedValue<[f32; 3]>,
 
-    shininess: TexturedValue<f32>,
-    opacity: TexturedValue<f32>,
-    roughness: TexturedValue<f32>,
-    metallic: TexturedValue<f32>,
+    pub shininess: TexturedValue<f32>,
+    pub opacity: TexturedValue<f32>,
+    pub roughness: TexturedValue<f32>,
+    pub metallic: TexturedValue<f32>,
 
-    illum: IllumModel,
-    ior: Option<f32>,
-    
-    normal_map: Option<Texture>,
-    bump_map: Option<Texture>,
-    displacement_map: Option<Texture>,
+    pub illum: IllumModel,
+    pub ior: Option<f32>,
+
+    pub normal_map: Option<Texture>,
+    pub bump_map: Option<Texture>,
+    pub displacement_map: Option<Texture>,
 }
 
 impl Default for MtlMaterial {
@@ -165,14 +165,17 @@ impl Default for MtlMaterial {
 
 pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMaterial]>> {
     let mut tokenizer = MtlTokenizer::from_path(file_path)?;
-    
+
     let mut materials = Vec::<MtlMaterial>::with_capacity(4);
-    
+
     while let Some(token) = tokenizer.next_token() {
         use crate::MtlToken;
         match token? {
             MtlToken::Material(name) => {
-                materials.push(MtlMaterial{ name, ..Default::default() });
+                materials.push(MtlMaterial {
+                    name,
+                    ..Default::default()
+                });
             }
             MtlToken::Ka { r, g, b } => {
                 let mat = materials
@@ -181,17 +184,20 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                 mat.ambient.color = Some([r, g, b]);
             }
             MtlToken::MapKa { options, file_name } => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'map_Ka' before any 'newmtl' material"))?;
-                let mm = options.mm.unwrap_or(crate::Mm{base: 0.0, gain: 1.0});
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'map_Ka' before any 'newmtl' material",
+                ))?;
+                let mm = options.mm.unwrap_or(crate::Mm {
+                    base: 0.0,
+                    gain: 1.0,
+                });
                 mat.ambient.texture = Some(Texture {
                     file_path: file_name,
                     offset: options.o.unwrap_or([0.0; 3]),
                     scale: options.s.unwrap_or([1.0; 3]),
                     turbulence: options.t.unwrap_or([0.0; 3]),
                     brightness: mm.base,
-                    contrast: mm.gain, 
+                    contrast: mm.gain,
                     bump_multiplier: 1.0,
                     blend_v: options.blendv.unwrap_or(true),
                     blend_u: options.blendu.unwrap_or(true),
@@ -207,17 +213,20 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                 mat.diffuse.color = Some([r, g, b]);
             }
             MtlToken::MapKd { options, file_name } => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'map_Kd' before any 'newmtl' material"))?;
-                let mm = options.mm.unwrap_or(crate::Mm{base: 0.0, gain: 1.0});
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'map_Kd' before any 'newmtl' material",
+                ))?;
+                let mm = options.mm.unwrap_or(crate::Mm {
+                    base: 0.0,
+                    gain: 1.0,
+                });
                 mat.diffuse.texture = Some(Texture {
                     file_path: file_name,
                     offset: options.o.unwrap_or([0.0; 3]),
                     scale: options.s.unwrap_or([1.0; 3]),
                     turbulence: options.t.unwrap_or([0.0; 3]),
                     brightness: mm.base,
-                    contrast: mm.gain, 
+                    contrast: mm.gain,
                     bump_multiplier: 1.0,
                     blend_v: options.blendv.unwrap_or(true),
                     blend_u: options.blendu.unwrap_or(true),
@@ -233,10 +242,13 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                 mat.specular.color = Some([r, g, b]);
             }
             MtlToken::MapKs { options, file_name } => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'map_Ks' before any 'newmtl' material"))?;
-                let mm = options.mm.unwrap_or(crate::Mm{base: 0.0, gain: 1.0});
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'map_Ks' before any 'newmtl' material",
+                ))?;
+                let mm = options.mm.unwrap_or(crate::Mm {
+                    base: 0.0,
+                    gain: 1.0,
+                });
 
                 mat.specular.texture = Some(Texture {
                     file_path: file_name,
@@ -244,7 +256,7 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                     scale: options.s.unwrap_or([1.0; 3]),
                     turbulence: options.t.unwrap_or([0.0; 3]),
                     brightness: mm.base,
-                    contrast: mm.gain, 
+                    contrast: mm.gain,
                     bump_multiplier: 1.0,
                     blend_v: options.blendv.unwrap_or(true),
                     blend_u: options.blendu.unwrap_or(true),
@@ -260,10 +272,13 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                 mat.shininess.color = Some(specular_exponent);
             }
             MtlToken::MapNs { options, file_name } => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'map_Ns' before any 'newmtl' material"))?;
-                let mm = options.mm.unwrap_or(crate::Mm{base: 0.0, gain: 1.0});
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'map_Ns' before any 'newmtl' material",
+                ))?;
+                let mm = options.mm.unwrap_or(crate::Mm {
+                    base: 0.0,
+                    gain: 1.0,
+                });
 
                 mat.shininess.texture = Some(Texture {
                     file_path: file_name,
@@ -287,23 +302,27 @@ pub fn load_materials(file_path: &std::path::Path) -> crate::Result<Box<[MtlMate
                 mat.ior = Some(optical_density);
             }
             MtlToken::Illum(illum) => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'illum' before any 'newmtl' material"))?;
-                mat.illum = IllumModel::from_u32(illum).ok_or(crate::Error::Parse("Unrecognized Illum value"))?;
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'illum' before any 'newmtl' material",
+                ))?;
+                mat.illum = IllumModel::from_u32(illum)
+                    .ok_or(crate::Error::Parse("Unrecognized Illum value"))?;
             }
             MtlToken::Bump { options, file_name } => {
-                let mat = materials
-                    .last_mut()
-                    .ok_or(crate::Error::Parse("Mtl 'bump' before any 'newmtl' material"))?;
-                let mm = options.mm.unwrap_or(crate::Mm{base: 0.0, gain: 1.0});
+                let mat = materials.last_mut().ok_or(crate::Error::Parse(
+                    "Mtl 'bump' before any 'newmtl' material",
+                ))?;
+                let mm = options.mm.unwrap_or(crate::Mm {
+                    base: 0.0,
+                    gain: 1.0,
+                });
                 mat.bump_map = Some(Texture {
                     file_path: file_name,
                     offset: options.o.unwrap_or([0.0; 3]),
                     scale: options.s.unwrap_or([1.0; 3]),
                     turbulence: options.t.unwrap_or([0.0; 3]),
                     brightness: mm.base,
-                    contrast: mm.gain, 
+                    contrast: mm.gain,
                     bump_multiplier: options.bm.unwrap_or(1.0),
                     blend_v: options.blendv.unwrap_or(true),
                     blend_u: options.blendu.unwrap_or(true),

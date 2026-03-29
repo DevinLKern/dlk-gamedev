@@ -1,11 +1,8 @@
 use crate::device::SharedDeviceRef;
-use crate::result::Result;
-use std::rc::Rc;
 
 use ash::prelude::VkResult;
 use ash::vk;
 
-#[allow(dead_code)]
 #[derive(Debug)]
 pub struct DescriptorSetLayoutBindingInfo {
     pub binding: u32,
@@ -89,79 +86,5 @@ impl std::fmt::Display for DescriptorSetLayout {
             )?;
         }
         write!(f, "], handle: {:?}}}", self.handle)
-    }
-}
-
-pub struct DescriptorPool {
-    device: SharedDeviceRef,
-    handle: vk::DescriptorPool,
-}
-
-impl DescriptorPool {
-    pub fn new(
-        device: SharedDeviceRef,
-        create_info: &vk::DescriptorPoolCreateInfo,
-    ) -> Result<Self> {
-        let pool = unsafe { device.create_descriptor_pool(create_info) }?;
-        Ok(Self {
-            device,
-            handle: pool,
-        })
-    }
-}
-
-impl Drop for DescriptorPool {
-    fn drop(&mut self) {
-        unsafe { self.device.destroy_descriptor_pool(self.handle) }
-    }
-}
-
-#[allow(dead_code)]
-pub struct DescriptorSet {
-    device: SharedDeviceRef,
-    pool: Rc<DescriptorPool>,
-    pipeline_layout: Rc<crate::PipelineLayout>,
-    set_index: u32,
-    pub handle: vk::DescriptorSet,
-}
-
-impl DescriptorSet {
-    pub fn allocate(
-        device: SharedDeviceRef,
-        pool: Rc<DescriptorPool>,
-        set_index: u32,
-        pipeline_layout: Rc<crate::PipelineLayout>,
-    ) -> Result<Self> {
-        let set_layouts = [pipeline_layout.get_set_layouts()[set_index as usize].handle];
-        let allocate_info = vk::DescriptorSetAllocateInfo {
-            descriptor_pool: pool.handle,
-            descriptor_set_count: set_layouts.len() as u32,
-            p_set_layouts: set_layouts.as_ptr(),
-            ..Default::default()
-        };
-
-        let descriptor_sets = unsafe { device.allocate_descriptor_sets(&allocate_info) }?;
-
-        Ok(Self {
-            device,
-            pool,
-            pipeline_layout,
-            set_index,
-            handle: descriptor_sets[0],
-        })
-    }
-
-    pub fn bind(&self, command_buffer: vk::CommandBuffer, dynamic_offsets: &[u32]) {
-        let sets = [self.handle];
-        unsafe {
-            self.device.cmd_bind_descriptor_sets(
-                command_buffer,
-                self.pipeline_layout.bind_point,
-                self.pipeline_layout.handle,
-                self.set_index,
-                &sets,
-                dynamic_offsets,
-            );
-        }
     }
 }

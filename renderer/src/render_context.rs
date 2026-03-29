@@ -2,6 +2,8 @@ use ash::vk;
 use std::rc::Rc;
 use vulkan::{Pipeline, device::SharedDeviceRef};
 
+use crate::CameraUBO;
+
 #[allow(dead_code)]
 pub struct RenderContext {
     swapchain: vulkan::Swapchain,
@@ -12,15 +14,9 @@ pub struct RenderContext {
     command_infos: Box<[(vk::CommandPool, vk::CommandBuffer)]>,
     depth_images: Box<[vulkan::Image]>,
     pipeline: Rc<vulkan::Pipeline>,
-    per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
-    per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
-    other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]>,
-    per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
-    per_obj_dynamic_uniform_buffers: Box<[(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)]>,
-    other_uniform_buffer: Rc<vulkan::UniformBV>,
-    // keeps image alive as long as render context is alive
-    images: Rc<[vulkan::Image]>,
-    index: usize,
+    pub per_frame_buffer_element_size: u32,
+    per_frame_buffer: vulkan::Buffer,
+    pub index: usize,
 }
 
 pub const MAX_FRAME_COUNT: usize = 3;
@@ -28,29 +24,12 @@ pub const MAX_FRAME_COUNT: usize = 3;
 impl RenderContext {
     pub fn new(
         device: SharedDeviceRef,
+        pipeline_layout: Rc<vulkan::PipelineLayout>,
         window: &winit::window::Window,
-        pipeline_layout: Rc<vulkan::pipeline::PipelineLayout>,
-        per_frame_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-        per_obj_descriptor_set: Rc<vulkan::DescriptorSet>,
-        other_descriptor_sets: Box<[vulkan::DescriptorSet]>,
-        per_frame_uniform_buffers: Box<[vulkan::UniformBV]>,
-        per_obj_dynamic_uniform_buffers: Box<
-            [(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)],
-        >,
-        other_uniform_buffer: Rc<vulkan::UniformBV>,
-        images: Rc<[vulkan::Image]>,
+        per_frame_ds: vk::DescriptorSet,
     ) -> crate::Result<RenderContext> {
-        let per_frame_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = per_frame_descriptor_sets
-            .into_iter()
-            .map(|ds| Rc::new(ds))
-            .collect();
-        let other_descriptor_sets: Box<[Rc<vulkan::DescriptorSet>]> = other_descriptor_sets
-            .into_iter()
-            .map(|ds| Rc::new(ds))
-            .collect();
-
         let swapchain = vulkan::Swapchain::new(device.clone(), window)
-            .inspect_err(|e| tracing::error!("{}", e))?;
+            .inspect_err(|e| tracing::error!("{e}"))?;
 
         let command_buffer_executed = {
             let mut fences: Vec<vk::Fence> = Vec::with_capacity(MAX_FRAME_COUNT);
@@ -61,7 +40,7 @@ impl RenderContext {
                 };
                 let fence =
                     unsafe { device.create_fence(&fence_create_info) }.inspect_err(|e| {
-                        tracing::error!("{}", e);
+                        tracing::error!("{e}");
                         unsafe {
                             for f in fences.iter() {
                                 device.destroy_fence(*f);
@@ -72,6 +51,52 @@ impl RenderContext {
             }
 
             fences.into_boxed_slice()
+        };
+
+        let (per_frame_buffer, per_frame_buffer_element_size) = {
+            let element_size = {
+                let struct_size = std::mem::size_of::<CameraUBO>();
+
+                let properties = unsafe { device.get_physical_device_properties() };
+
+                struct_size.next_multiple_of(
+                    properties.limits.min_uniform_buffer_offset_alignment as usize,
+                )
+            };
+
+            let buffer = {
+                let buffer_size = element_size * MAX_FRAME_COUNT;
+
+                let buffer_create_info = vulkan::BufferCreateInfo {
+                    size: buffer_size as u64,
+                    usage: vk::BufferUsageFlags::UNIFORM_BUFFER,
+                    memory_property_flags: vk::MemoryPropertyFlags::HOST_COHERENT
+                        | vk::MemoryPropertyFlags::HOST_VISIBLE,
+                };
+
+                vulkan::Buffer::new(device.clone(), &buffer_create_info)?
+            };
+
+            let buffer_info = vk::DescriptorBufferInfo {
+                buffer: buffer.handle,
+                offset: 0,
+                range: element_size as u64,
+            };
+
+            let writes = [vk::WriteDescriptorSet {
+                dst_set: per_frame_ds,
+                dst_binding: 0,
+                descriptor_count: 1,
+                descriptor_type: vk::DescriptorType::UNIFORM_BUFFER_DYNAMIC,
+                p_buffer_info: &buffer_info,
+                ..Default::default()
+            }];
+
+            unsafe {
+                device.update_descriptor_sets(&writes, &[]);
+            }
+
+            (buffer, element_size)
         };
 
         let (image_acquired, render_complete) = {
@@ -387,13 +412,8 @@ impl RenderContext {
             command_infos,
             depth_images,
             pipeline,
-            per_frame_descriptor_sets,
-            per_obj_descriptor_set,
-            other_descriptor_sets,
-            per_frame_uniform_buffers,
-            per_obj_dynamic_uniform_buffers,
-            other_uniform_buffer,
-            images,
+            per_frame_buffer_element_size: per_frame_buffer_element_size as u32,
+            per_frame_buffer,
             index: 0,
         })
     }
@@ -425,22 +445,31 @@ impl RenderContext {
     pub fn get_pipeline(&self) -> Rc<vulkan::Pipeline> {
         self.pipeline.clone()
     }
-    pub fn get_current_per_frame_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
-        self.per_frame_descriptor_sets[self.index].clone()
-    }
-    pub fn get_per_obj_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
-        self.per_obj_descriptor_set.clone()
-    }
-    pub fn get_other_descriptor_set(&self) -> Rc<vulkan::DescriptorSet> {
-        self.other_descriptor_sets[0].clone()
-    }
-    pub fn get_current_per_frame_buffer(&self) -> &vulkan::UniformBV {
-        &self.per_frame_uniform_buffers[self.index]
-    }
-    pub fn get_per_obj_dynamic_uniform_buffers(
-        &self,
-    ) -> &[(vulkan::DynamicUniformBV, vulkan::DynamicUniformBV)] {
-        &self.per_obj_dynamic_uniform_buffers
+    pub fn update_camera(&self, camera_ubo: crate::CameraUBO) -> crate::Result<()> {
+        let element_size = {
+            let struct_size = std::mem::size_of::<CameraUBO>();
+
+            let properties = unsafe { self.device.get_physical_device_properties() };
+
+            struct_size
+                .next_multiple_of(properties.limits.min_uniform_buffer_offset_alignment as usize)
+        };
+
+        let offset = self.index * element_size;
+
+        let src = &camera_ubo;
+
+        unsafe {
+            let dst = self
+                .per_frame_buffer
+                .map_memory(offset as vk::DeviceSize, element_size as vk::DeviceSize)?;
+
+            std::ptr::copy_nonoverlapping(src, dst as *mut CameraUBO, 1);
+
+            self.per_frame_buffer.unmap();
+        }
+
+        Ok(())
     }
     pub unsafe fn draw<F>(&mut self, record_draw_commands: F) -> vulkan::result::Result<()>
     where

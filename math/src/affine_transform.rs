@@ -1,6 +1,7 @@
 use crate::{Mat4, Quat, Vec3, Vec4};
 
 #[allow(dead_code)]
+#[derive(Clone, Copy)]
 pub struct AffineTransform {
     pub position: Vec3<f32>,
     pub orientation: Quat,

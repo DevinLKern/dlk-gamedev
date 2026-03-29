@@ -1,6 +1,6 @@
 #version 450
 
-const uint MESH_FLAG_TEXTURED_BIT = (1 << 0);
+const uint MATERIAL_FLAG_TEXTURED_BIT = (1 << 0);
 
 // set 0 is for objects that are updated every frame
 layout(std140, set = 0, binding = 0) uniform CameraUBO {
@@ -11,16 +11,8 @@ layout(std140, set = 0, binding = 0) uniform CameraUBO {
 // set 1 is for objects that are update every object
 layout(std140, set = 1, binding = 0) uniform MeshUBO {
     mat4 model;
-    vec4 base_color;
-    uint flags;
+    uint material_index;
 } mesh;
-
-// set 2 is for objects that are updated irregularly
-layout(std140, set = 2, binding = 0) uniform GlobalLightUBO {
-    vec3 direction;
-    vec4 color;
-    float ambient;
-} world_light;
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec2 tex_coord;

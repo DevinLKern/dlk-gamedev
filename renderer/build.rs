@@ -44,6 +44,15 @@ fn get_type_name(type_info: &spirv::TypeInfo) -> String {
         } => {
             format!("[{}; {}]", get_type_name(col_type), col_count)
         }
+        TypeInfo::Array {
+            element_type,
+            element_count,
+        } => {
+            let element_type_name = get_type_name(&element_type);
+
+            format!("[{}; {}]", element_type_name, element_count)
+        }
+        TypeInfo::Struct { name, .. } => name.to_string(),
         _ => panic!("Type not supported! {:?}", type_info),
     }
 }
@@ -52,6 +61,9 @@ fn type_info_to_rust(type_info: &spirv::TypeInfo) -> String {
     match type_info {
         TypeInfo::Struct { name, members, .. } => {
             for m in members.iter() {
+                // TODO: field_type can be of type RutimeArray,
+                // in which case the size will be unknown at build time.
+                // This system should account for that possibility.
                 println!(
                     "field_name: {}, field_offset: {}, field_size: {}",
                     m.field_name,
@@ -132,7 +144,7 @@ fn generate_struct_types(
 
     for (_, type_info) in all_vars {
         writeln!(w, "#[repr(C)]")?;
-        writeln!(w, "#[derive(Clone, Default)]")?;
+        writeln!(w, "#[derive(Clone, Copy)]")?;
         writeln!(w, "pub struct {}", type_info_to_rust(&type_info))?;
     }
 

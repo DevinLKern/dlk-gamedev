@@ -2,7 +2,6 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-
 pub struct Vertex {
     pub x: f64,
     pub y: f64,
@@ -71,8 +70,8 @@ pub enum Primitive {
 
 #[allow(unused)]
 pub struct Shape {
-    name: Option<Box<str>>,
-    materials: Box<[Box<str>]>,
+    pub name: Option<Box<str>>,
+    pub materials: Box<[Box<str>]>,
     // (index_of_material_name, shading_group, primitive)
     primitives: Box<[(Option<usize>, u32, Primitive)]>,
 }
@@ -98,7 +97,7 @@ fn flush_shape(
     cur_shape_materials: &mut Vec<Box<str>>,
     cur_shape_primitives: &mut Vec<(Option<usize>, u32, Primitive)>,
 ) {
-    let has_nothing = cur_shape_name.is_some()
+    let has_nothing = cur_shape_name.is_none()
         && cur_shape_materials.is_empty()
         && cur_shape_primitives.is_empty();
     if has_nothing {
@@ -107,6 +106,7 @@ fn flush_shape(
         cur_shape_primitives.clear();
         return;
     }
+
     shapes.push(Shape {
         name: cur_shape_name.take(),
         materials: cur_shape_materials.drain(..).collect(),
@@ -144,11 +144,12 @@ impl ObjScene {
                     material_files.push(file_path);
                 }
                 UseMaterial(material_name) => {
-                    // should only push if the material name isn't already in material_names?
+                    // only push if the material name is not in material_names
                     let index = material_indexes
                         .entry(material_name.clone())
                         .or_insert_with(|| {
                             let i = material_names.len();
+                            cur_shape_materials.push(material_name.clone());
                             material_names.push(material_name);
                             i
                         });

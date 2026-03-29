@@ -114,6 +114,14 @@ impl TypeInfo {
 
                 Some(last_member.field_offset + last_member.field_type.calc_size()?)
             }
+            TypeInfo::Array {
+                element_type,
+                element_count,
+            } => {
+                let element_size = element_type.calc_size()?;
+
+                Some(element_size * element_count)
+            }
             _ => None,
         }
     }
@@ -446,7 +454,7 @@ impl Module {
                     }
                 }
                 crate::OP_TYPE_RUNTIME_ARRAY => {
-                    let element_type_id = i.operands[2];
+                    let element_type_id = i.operands[1];
                     TypeInfo::RuntimeArray {
                         element_type: Box::new(self.get_type_from_id(element_type_id)?),
                     }

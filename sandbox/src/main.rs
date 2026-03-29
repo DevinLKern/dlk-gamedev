@@ -4,13 +4,17 @@ mod result;
 
 use camera::Camera;
 use constants::{WORLD_FORWARDS, WORLD_RIGHT, WORLD_UP};
-use renderer::ShaderVertVertex;
+use image::DynamicImage;
+use renderer::{MaterialUBO, ShaderVertVertex};
 use result::{Error, Result};
 
 use ash::vk;
 
-use std::collections::HashMap;
-use std::rc::Rc;
+use std::str::FromStr;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
 
 use winit::{
     application::ApplicationHandler,
@@ -36,62 +40,33 @@ struct Application {
     active_window: Option<WindowId>,
     windows: HashMap<WindowId, (renderer::RenderContext, Window, Camera)>,
     renderer: renderer::Renderer,
-    plane_vertex_buffer: Rc<vulkan::VertexBV>,
-    plane_index_buffer: Rc<vulkan::IndexBV>,
-    model_vertex_buffers: Rc<[vulkan::VertexBV]>,
-    model_index_buffers: Rc<[vulkan::IndexBV]>,
-    images: Rc<[vulkan::Image]>,
+    draw_infos: Box<[(vulkan::VertexBV, vulkan::IndexBV, u32)]>,
     model_transform: math::AffineTransform,
-    model_base_color: Vec4<f32>,
-    model_flags: u32,
-    plane_transform: math::AffineTransform,
-    plane_base_color: Vec4<f32>,
-    plane_flags: u32,
     global_light_direction: Vec3<f32>,
     global_light_color: Vec4<f32>,
     global_ambient_light: f32,
     exiting: bool,
 }
 
-unsafe extern "system" fn vulkan_debug_callback(
-    message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
-    message_type: vk::DebugUtilsMessageTypeFlagsEXT,
-    p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT<'_>,
-    _user_data: *mut std::os::raw::c_void,
-) -> vk::Bool32 {
-    let callback_data = unsafe { *p_callback_data };
-    let message_id_number = callback_data.message_id_number;
-
-    let message_id_name = if callback_data.p_message_id_name.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message_id_name).to_string_lossy() }
-    };
-
-    let message = if callback_data.p_message.is_null() {
-        std::borrow::Cow::from("")
-    } else {
-        unsafe { std::ffi::CStr::from_ptr(callback_data.p_message).to_string_lossy() }
-    };
-
-    let message = format!("{message_type:?} [{message_id_name} ({message_id_number})] : {message}");
-
-    if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
-        tracing::error!(message);
-    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::WARNING) {
-        tracing::warn!(message);
-    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::INFO) {
-        tracing::info!(message);
-    } else if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::VERBOSE) {
-        tracing::trace!(message);
-    }
-
-    vk::FALSE
-}
-
 const DEFAULT_IMAGE: &[u8] = include_bytes!("../../files/images/default.png");
 
 impl Application {
+    fn search_for(base: &Path, target: &Path) -> Option<PathBuf> {
+        if !base.is_dir() {
+            return None;
+        }
+
+        let mut ancestors = base.ancestors();
+        while let Some(ancestor) = ancestors.next() {
+            let cur = ancestor.join(target);
+
+            if cur.exists() {
+                return Some(cur);
+            }
+        }
+
+        return None;
+    }
     fn new(
         mouse_sensitivity: f64,
         derive_normals: bool,
@@ -102,30 +77,192 @@ impl Application {
     ) -> Result<Self> {
         let state = ApplicationState::ObjectMode;
 
-        let instance = vulkan::Instance::new(debug_enabled, display_handle)?;
-        let device = vulkan::Device::new(instance, Some(vulkan_debug_callback))?;
-        let renderer = renderer::Renderer::new(device)?;
-        let images = {
-            let default_image_data =
+        // load materials
+        let file_path = model_path.with_extension("mtl");
+        let mtl_materials = obj_mtl::load_materials(&file_path)?;
+
+        // load textures and images
+        let (texture_data, texture_name_to_index) = {
+            let mut texture_data = Vec::<DynamicImage>::with_capacity(8);
+            let mut texture_indices = HashMap::<Box<str>, usize>::new();
+            let default_texture_data =
                 image::load_from_memory_with_format(DEFAULT_IMAGE, image::ImageFormat::Png)?;
 
-            let default_image = renderer
-                .create_image(default_image_data)
-                .inspect_err(|e| tracing::error!("{e}"))?;
+            texture_data.push(default_texture_data);
 
-            Rc::new([default_image])
+            // load diffuse textures
+            for mat in mtl_materials.iter() {
+                let diffuse_texture = if let Some(texture) = &mat.diffuse.texture {
+                    texture
+                } else {
+                    continue;
+                };
+
+                // skip if texture already loaded
+                if texture_indices.contains_key(&diffuse_texture.file_path) {
+                    continue;
+                }
+
+                // search for texture
+                let path = {
+                    let base = model_path.with_file_name("");
+                    let target = match PathBuf::from_str(&diffuse_texture.file_path) {
+                        Ok(path) => path,
+                        Err(_) => {
+                            tracing::warn!(
+                                "Malformed diffuse texture file path. Reverting to base color."
+                            );
+                            continue;
+                        }
+                    };
+
+                    match Self::search_for(&base, &target) {
+                        Some(path) => path,
+                        None => {
+                            tracing::warn!(
+                                "Could not find diffuse texture. Reverting to base color."
+                            );
+                            continue;
+                        }
+                    }
+                };
+
+                let data = image::open(&path)?;
+
+                let index = texture_data.len();
+                texture_indices.insert(diffuse_texture.file_path.clone(), index);
+                texture_data.push(data);
+            }
+
+            (texture_data, texture_indices)
         };
 
-        let (model_vertex_buffers, model_index_buffers, model_transform) = {
+        // create materials
+        let mut materials = Vec::<renderer::MaterialUBO>::with_capacity(mtl_materials.len() + 1);
+        // add default material
+        materials.push(renderer::MaterialUBO {
+            flags: 0,
+            texture_index: 0,
+            _pad2: [0; 8],
+            base_color: [0.8, 0.2, 0.2, 1.0],
+        });
+        let mut name_to_material_index = HashMap::<Box<str>, usize>::new();
+        for material in mtl_materials.into_iter() {
+            if name_to_material_index.contains_key(&material.name) {
+                continue;
+            }
+
+            let (color, texture) = (
+                material.diffuse.color.as_ref(),
+                material.diffuse.texture.as_ref(),
+            );
+            let (color, texture, flags) = match (color, texture) {
+                (Some(c), Some(t)) => {
+                    if let Some(&idx) = texture_name_to_index.get(&t.file_path) {
+                        ([c[0], c[1], c[2], 1.0], idx as u32, 1u32)
+                    } else {
+                        tracing::warn!(
+                            "Texture '{}' not found in loaded textures. Falling back to base color.",
+                            t.file_path
+                        );
+                        ([c[0], c[1], c[2], 1.0], 0u32, 0u32)
+                    }
+                }
+                (Some(c), None) => ([c[0], c[1], c[2], 1.0], 0u32, 0u32),
+                (None, Some(t)) => {
+                    if let Some(&idx) = texture_name_to_index.get(&t.file_path) {
+                        ([0.0, 0.0, 0.0, 0.0], idx as u32, 1u32)
+                    } else {
+                        tracing::warn!(
+                            "Texture '{}' not found in loaded textures. Disabling texture flag.",
+                            t.file_path
+                        );
+                        ([1.0, 1.0, 1.0, 1.0], 0u32, 0u32)
+                    }
+                }
+                (None, None) => ([1.0, 1.0, 1.0, 1.0], 0u32, 0u32),
+            };
+
+            let idx = materials.len();
+            materials.push(MaterialUBO {
+                flags,
+                base_color: color,
+                texture_index: texture,
+                _pad2: [0; 8],
+            });
+            name_to_material_index.insert(material.name, idx);
+        }
+
+        let (model_transform, plane_transform, mesh_data) = {
+            // vertex_data, index_data, material_index, model_transform_index
+            let mut mesh_data = Vec::<(Vec<ShaderVertVertex>, Vec<u32>, u32)>::new();
+
+            let plane_transform = math::AffineTransform {
+                position: Vec3::ZERO.sub(WORLD_UP).scaled(0.5),
+                orientation: Quat::IDENTITY,
+                scalar: Vec3::new(1000.0, 1000.0, 1000.0),
+            };
+
+            let plane_vertex_buffer_data = {
+                const F: Vec3<f32> = WORLD_FORWARDS;
+                const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_FORWARDS);
+                const R: Vec3<f32> = WORLD_RIGHT;
+                const L: Vec3<f32> = Vec3::ZERO.sub(WORLD_RIGHT);
+
+                const FR: Vec3<f32> = F.add(R);
+                const FL: Vec3<f32> = F.add(L);
+                const BR: Vec3<f32> = B.add(R);
+                const BL: Vec3<f32> = B.add(L);
+
+                vec![
+                    renderer::ShaderVertVertex {
+                        position: FL.into_arr(),
+                        tex_coord: [1.0, 0.0],
+                        normal: WORLD_UP.into_arr(),
+                    },
+                    renderer::ShaderVertVertex {
+                        position: FR.into_arr(),
+                        tex_coord: [0.0, 0.0],
+                        normal: WORLD_UP.into_arr(),
+                    },
+                    renderer::ShaderVertVertex {
+                        position: BR.into_arr(),
+                        tex_coord: [0.0, 1.0],
+                        normal: WORLD_UP.into_arr(),
+                    },
+                    renderer::ShaderVertVertex {
+                        position: BL.into_arr(),
+                        tex_coord: [1.0, 1.0],
+                        normal: WORLD_UP.into_arr(),
+                    },
+                ]
+            };
+            let plane_index_buffer_data = vec![0, 1, 2, 2, 3, 0];
+
+            // 0 is the index of the default material
+            mesh_data.push((plane_vertex_buffer_data, plane_index_buffer_data, 0));
+
             use obj_mtl::*;
             let objf = ObjScene::from_file(model_path)?;
-
-            let mut object_data = Vec::<(Vec<ShaderVertVertex>, Vec<u32>)>::new();
-
             for shape in objf.get_shapes() {
                 let mut vertices = Vec::<ShaderVertVertex>::new();
                 let mut indices = Vec::<u32>::new();
                 let mut vertex_map = HashMap::<VtnIndex, u32>::new();
+
+                let material_idx: u32 = if shape.materials.len() > 0 {
+                    if shape.materials.len() != 1 {
+                        tracing::warn!("Multiple materials per shape not supported");
+                    }
+
+                    let mat = shape.materials.first().unwrap();
+                    let idx = name_to_material_index.get(mat).unwrap_or_else(|| {
+                        tracing::warn!("Could not find {} material. Defaulting to 0", mat);
+                        &0
+                    });
+                    *idx as u32
+                } else {
+                    0
+                };
 
                 // Build a triangle list (fan triangulation for polygons/quads).
                 let mut triangles = Vec::<(VtnIndex, VtnIndex, VtnIndex)>::with_capacity(64);
@@ -156,7 +293,7 @@ impl Application {
                                 let p2 = &objf.vs[v2.v];
                                 let p2 = Vec3::new(p2.x as f32, p2.y as f32, p2.z as f32);
 
-                                let face_normal = p1.sub(p2).cross(p2.sub(p0));
+                                let face_normal = p1.sub(p0).cross(p2.sub(p0));
 
                                 Some(obj_to_world.mul_vec(face_normal).into_arr())
                             }
@@ -183,7 +320,7 @@ impl Application {
                                 .into_arr();
 
                             let tex_coord = if let Some(i) = v.vt {
-                                [objf.vts[i].u as f32, objf.vts[i].v as f32]
+                                [objf.vts[i].u as f32, 1.0 - objf.vts[i].v as f32]
                             } else {
                                 [0.0, 0.0]
                             };
@@ -214,13 +351,13 @@ impl Application {
                     }
                 }
 
-                object_data.push((vertices, indices));
+                mesh_data.push((vertices, indices, material_idx));
             }
 
             let model_transform = {
                 let mut min = [f32::MAX; 3];
                 let mut max = [f32::MIN; 3];
-                for (vertices, _) in object_data.iter() {
+                for (vertices, _, _) in mesh_data.iter() {
                     for v in vertices.iter() {
                         for i in 0..3 {
                             min[i] = min[i].min(v.position[i]);
@@ -228,139 +365,96 @@ impl Application {
                         }
                     }
                 }
-                let center = Vec3::new(
-                    (min[0] + max[0]) * 0.5,
-                    (min[1] + max[1]) * 0.5,
-                    (min[2] + max[2]) * 0.5,
-                );
+                let min = Vec3::new(min[0], min[1], min[2]);
+                let max = Vec3::new(max[0], max[1], max[2]);
 
-                let model_scale = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
+                let model_scale = (max.x() - min.x())
+                    .max(max.y() - min.y())
+                    .max(max.z() - min.z());
                 let model_scale = 1.0 / model_scale;
 
+                let model_pos = {
+                    let min_normalized = min.scaled(model_scale);
+                    let min_reduced = min_normalized.scaled_nonuniform(WORLD_UP);
+                    let plane_reduced = plane_transform.position.scaled_nonuniform(WORLD_UP);
+
+                    plane_reduced.sub(min_reduced)
+                };
+
                 math::AffineTransform {
-                    position: Vec3::ZERO.sub(center).add(WORLD_FORWARDS.scaled(1.5)),
+                    position: model_pos,
                     orientation: Quat::IDENTITY,
                     scalar: Vec3::new(model_scale, model_scale, model_scale),
                 }
             };
 
-            let (vertex_buffers, index_buffers) = {
-                let mut vbs = Vec::<vulkan::VertexBV>::new();
-                let mut ibs = Vec::<vulkan::IndexBV>::new();
-
-                for (vertices, indices) in object_data.iter() {
-                    if vertices.len() == 0 || indices.len() == 0 {
-                        continue;
-                    }
-
-                    let vb_data = unsafe {
-                        std::slice::from_raw_parts(
-                            vertices.as_ptr() as *const u8,
-                            vertices.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
-                        )
-                    };
-
-                    let vb = renderer.create_vertex_buffer(vb_data, vertices.len() as u32)?;
-
-                    let ib_data = unsafe {
-                        std::slice::from_raw_parts(
-                            indices.as_ptr() as *const u8,
-                            indices.len() * std::mem::size_of::<u32>(),
-                        )
-                    };
-
-                    let ib = renderer.create_index_buffer(
-                        ib_data,
-                        vk::IndexType::UINT32,
-                        indices.len() as u32,
-                        0,
-                    )?;
-
-                    vbs.push(vb);
-                    ibs.push(ib);
-                }
-
-                (vbs, ibs)
-            };
-
-            (vertex_buffers, index_buffers, model_transform)
+            (model_transform, plane_transform, mesh_data)
         };
 
-        const PLANE_VERTEX_BUFFER_DATA: [renderer::ShaderVertVertex; 4] = {
-            const F: Vec3<f32> = WORLD_FORWARDS;
-            const B: Vec3<f32> = Vec3::ZERO.sub(WORLD_FORWARDS);
-            const R: Vec3<f32> = WORLD_RIGHT;
-            const L: Vec3<f32> = Vec3::ZERO.sub(WORLD_RIGHT);
+        let mut mesh_ubo_buffer_data: Box<[(math::AffineTransform, u32)]> = mesh_data
+            .iter()
+            .map(|(_, _, material_index)| (model_transform, *material_index))
+            .collect();
+        mesh_ubo_buffer_data[0] = (plane_transform, 0);
 
-            const FR: Vec3<f32> = F.add(R);
-            const FL: Vec3<f32> = F.add(L);
-            const BR: Vec3<f32> = B.add(R);
-            const BL: Vec3<f32> = B.add(L);
-            [
-                renderer::ShaderVertVertex {
-                    position: FL.into_arr(),
-                    tex_coord: [1.0, 0.0],
-                    normal: WORLD_UP.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: FR.into_arr(),
-                    tex_coord: [0.0, 0.0],
-                    normal: WORLD_UP.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: BR.into_arr(),
-                    tex_coord: [0.0, 1.0],
-                    normal: WORLD_UP.into_arr(),
-                },
-                renderer::ShaderVertVertex {
-                    position: BL.into_arr(),
-                    tex_coord: [1.0, 1.0],
-                    normal: WORLD_UP.into_arr(),
-                },
-            ]
-        };
-        const PLANE_INDEX_BUFFER_DATA: [u32; 6] = [0, 1, 2, 2, 3, 0];
+        let renderer = renderer::Renderer::new(
+            debug_enabled,
+            display_handle,
+            mesh_ubo_buffer_data.len() as u64,
+            &texture_data,
+            &materials,
+        )?;
 
-        let plane_vertex_buffer = {
-            let data = unsafe {
+        let mut draw_infos = Vec::<(vulkan::VertexBV, vulkan::IndexBV, u32)>::new();
+        for (vb_data, ib_data, mesh_idx) in mesh_data.into_iter() {
+            if vb_data.len() == 0 || ib_data.len() == 0 {
+                continue;
+            }
+            let vb_data_u8 = unsafe {
                 std::slice::from_raw_parts(
-                    PLANE_VERTEX_BUFFER_DATA.as_ptr() as *const u8,
-                    PLANE_VERTEX_BUFFER_DATA.len()
-                        * std::mem::size_of::<renderer::ShaderVertVertex>(),
+                    vb_data.as_ptr() as *const u8,
+                    vb_data.len() * std::mem::size_of::<renderer::ShaderVertVertex>(),
                 )
             };
 
-            let vb = renderer
-                .create_vertex_buffer(data, PLANE_VERTEX_BUFFER_DATA.len() as u32)
-                .inspect_err(|e| tracing::error!("{e}"))?;
+            let vb = renderer.create_vertex_buffer(&vb_data_u8, vb_data.len() as u32)?;
 
-            Rc::new(vb)
-        };
-        let plane_index_buffer = {
-            let data = unsafe {
+            let ib_data_u8 = unsafe {
                 std::slice::from_raw_parts(
-                    PLANE_INDEX_BUFFER_DATA.as_ptr() as *const u8,
-                    PLANE_INDEX_BUFFER_DATA.len() * std::mem::size_of::<u32>(),
+                    ib_data.as_ptr() as *const u8,
+                    ib_data.len() * std::mem::size_of::<u32>(),
                 )
             };
 
-            renderer
-                .create_index_buffer(
-                    data,
-                    vk::IndexType::UINT32,
-                    PLANE_INDEX_BUFFER_DATA.len() as u32,
-                    0,
-                )
-                .inspect_err(|e| tracing::error!("{e}"))?
-        };
+            let ib = renderer.create_index_buffer(
+                ib_data_u8,
+                vk::IndexType::UINT32,
+                ib_data.len() as u32,
+                0,
+            )?;
 
-        let plane_index_buffer = Rc::new(plane_index_buffer);
+            draw_infos.push((vb, ib, mesh_idx))
+        }
 
-        let plane_transform = math::AffineTransform {
-            position: model_transform.position.add(Vec3::ZERO.sub(WORLD_UP)),
-            orientation: math::Quat::IDENTITY,
-            scalar: Vec3::new(10.0, 10.0, 10.0),
-        };
+        for (i, (transform, material_index)) in mesh_ubo_buffer_data.iter().enumerate() {
+            let ubo_data = renderer::MeshUBO {
+                model: transform.as_mat4().into_2d_arr(),
+                material_index: *material_index,
+            };
+            let src = &ubo_data;
+            let offset = i as u64 * renderer.model_transform_buffer_element_size;
+            unsafe {
+                let dst = renderer
+                    .model_transform_buffer
+                    .map_memory(offset, renderer.model_transform_buffer_element_size)
+                    .inspect_err(|e| tracing::error!("{e}"))
+                    .unwrap();
+
+                std::ptr::copy_nonoverlapping(src, dst as *mut renderer::MeshUBO, 1);
+
+                renderer.model_transform_buffer.unmap()
+            }
+        }
 
         Ok(Self {
             state,
@@ -369,26 +463,15 @@ impl Application {
             active_window: None,
             renderer,
             windows: std::collections::HashMap::new(),
-            plane_vertex_buffer,
-            plane_index_buffer,
-            model_vertex_buffers: model_vertex_buffers.into(),
-            model_index_buffers: model_index_buffers.into(),
+            draw_infos: draw_infos.into_boxed_slice(),
             exiting: false,
-            images,
             model_transform,
-            model_base_color: Vec4::new(1.0, 0.1, 0.4, 1.0),
-            model_flags: 0,
-            plane_transform,
-            plane_base_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             global_light_direction: Vec3::ZERO.sub(WORLD_UP).add(WORLD_RIGHT.scaled(0.2)),
             global_light_color: Vec4::new(1.0, 1.0, 1.0, 1.0),
             global_ambient_light: 0.1,
-            plane_flags: 1,
         })
     }
-}
 
-impl Application {
     // returns true if a window close was requested.
     fn handle_window_event(
         &mut self,
@@ -409,6 +492,10 @@ impl Application {
                 return Ok(true);
             }
             WindowEvent::Resized(s) => {
+                unsafe { self.renderer.device.device_wait_idle() }
+                    .inspect_err(|e| tracing::error!("{e}"))
+                    .unwrap();
+
                 {
                     let (w, h) = (s.width as f32, s.height as f32);
                     let aspect_ratio = w / h;
@@ -416,123 +503,72 @@ impl Application {
                     camera.set_aspect_ratio(aspect_ratio);
                 }
 
+                let new_context = self.renderer.create_render_context(window)?;
+                *context = new_context;
+
                 let camera_ubo = renderer::CameraUBO {
                     view: camera.get_view_matrix().into_2d_arr(),
                     proj: camera.get_projection_matrix().into_2d_arr(),
-                    ..Default::default()
                 };
-                let mesh_ubos = [
-                    (
-                        renderer::MeshUBO {
-                            model: self.plane_transform.as_mat4().into_2d_arr(),
-                            base_color: self.plane_base_color.into_arr(),
-                            flags: self.plane_flags,
-                        },
-                        renderer::MaterialUBO { texture_index: 0 },
-                    ),
-                    (
-                        renderer::MeshUBO {
-                            model: self.model_transform.as_mat4().into_2d_arr(),
-                            base_color: self.model_base_color.into_arr(),
-                            flags: self.model_flags,
-                        },
-                        renderer::MaterialUBO { texture_index: 0 },
-                    ),
-                ];
-                let light_ubo = renderer::GlobalLightUBO {
-                    direction: self.global_light_direction.into_arr(),
-                    color: self.global_light_color.into_arr(),
-                    ambient: self.global_ambient_light,
-                    ..Default::default()
-                };
-                let new_context = self
-                    .renderer
-                    .create_render_context(
-                        &camera_ubo,
-                        &mesh_ubos,
-                        &light_ubo,
-                        window,
-                        self.images.clone(),
-                    )
-                    .inspect_err(|e| tracing::error!("{e}"))?;
-
-                *context = new_context;
+                context.update_camera(camera_ubo)?;
             }
             WindowEvent::RedrawRequested => {
-                // println!("Redraw requested!");
-
-                let camera_ubo = [renderer::CameraUBO {
+                let camera_ubo = renderer::CameraUBO {
                     view: camera.get_view_matrix().into_2d_arr(),
                     proj: camera.get_projection_matrix().into_2d_arr(),
-                    ..Default::default()
-                }];
-                let camera_ubo_ptr = camera_ubo.as_ptr() as *const u8;
-                let current_buffer = context.get_current_per_frame_buffer();
-                self.renderer
-                    .update_uniform_buffer(
-                        camera_ubo_ptr,
-                        std::mem::size_of::<renderer::CameraUBO>(),
-                        current_buffer,
-                    )
-                    .inspect_err(|e| tracing::error!("{e}"))?;
-
-                let current_ds = context.get_current_per_frame_descriptor_set();
-                let obj_ds = context.get_per_obj_descriptor_set();
-                let other_ds = context.get_other_descriptor_set();
+                };
+                context.update_camera(camera_ubo)?;
 
                 let pipeline = context.get_pipeline();
 
-                let plane_dynamic_offset: [u32; 2] = [
-                    context.get_per_obj_dynamic_uniform_buffers()[0].0.offset as u32,
-                    context.get_per_obj_dynamic_uniform_buffers()[0].1.offset as u32,
-                ];
-                let plane_vertex_buffer = self.plane_vertex_buffer.clone();
-                let plane_index_buffer = self.plane_index_buffer.clone();
+                let temp = context.index as u32 * context.per_frame_buffer_element_size;
 
-                let model_dynamic_offset: [u32; 2] = [
-                    context.get_per_obj_dynamic_uniform_buffers()[1].0.offset as u32,
-                    context.get_per_obj_dynamic_uniform_buffers()[1].1.offset as u32,
-                ];
-                let mesh_ubo = [renderer::MeshUBO {
-                    model: self.model_transform.as_mat4().into_2d_arr(),
-                    base_color: self.model_base_color.into_arr(),
-                    flags: self.model_flags,
-                }];
-                let mesh_ubo_ptr = mesh_ubo.as_ptr() as *const u8;
-                self.renderer
-                    .update_dynamic_uniform_buffer(
-                        mesh_ubo_ptr,
-                        std::mem::size_of::<renderer::MeshUBO>(),
-                        &context.get_per_obj_dynamic_uniform_buffers()[1].0,
-                    )
-                    .inspect_err(|e| tracing::error!("{e}"))?;
-                let model_vertex_buffers = self.model_vertex_buffers.clone();
-                let model_index_buffers = self.model_index_buffers.clone();
+                let record_draw_commands = |cmd: vk::CommandBuffer| unsafe {
+                    pipeline.bind(cmd);
+                    {
+                        let sets = [self.renderer.descriptor_sets[0]];
+                        self.renderer.device.cmd_bind_descriptor_sets(
+                            cmd,
+                            self.renderer.pipeline_layout.bind_point,
+                            self.renderer.pipeline_layout.handle,
+                            0,
+                            &sets,
+                            &[temp],
+                        );
+                    }
+                    {
+                        let sets = [self.renderer.descriptor_sets[2]];
+                        self.renderer.device.cmd_bind_descriptor_sets(
+                            cmd,
+                            self.renderer.pipeline_layout.bind_point,
+                            self.renderer.pipeline_layout.handle,
+                            2,
+                            &sets,
+                            &[],
+                        );
+                    }
 
-                let record_draw_commands = |command_buffer: vk::CommandBuffer| unsafe {
-                    current_ds.bind(command_buffer, &[]);
-                    other_ds.bind(command_buffer, &[]);
-
-                    pipeline.bind(command_buffer);
-
-                    obj_ds.bind(command_buffer, &plane_dynamic_offset);
-                    plane_vertex_buffer.bind(command_buffer);
-                    plane_index_buffer.bind(command_buffer);
-                    plane_index_buffer.draw(command_buffer);
-
-                    obj_ds.bind(command_buffer, &model_dynamic_offset);
-
-                    for (vb, ib) in model_vertex_buffers.iter().zip(model_index_buffers.iter()) {
-                        vb.bind(command_buffer);
-                        ib.bind(command_buffer);
-                        ib.draw(command_buffer);
+                    for (vb, ib, mesh_idx) in self.draw_infos.iter() {
+                        {
+                            let sets = [self.renderer.descriptor_sets[1]];
+                            self.renderer.device.cmd_bind_descriptor_sets(
+                                cmd,
+                                self.renderer.pipeline_layout.bind_point,
+                                self.renderer.pipeline_layout.handle,
+                                1,
+                                &sets,
+                                &[*mesh_idx
+                                    * self.renderer.model_transform_buffer_element_size as u32],
+                            );
+                        }
+                        vb.bind(cmd);
+                        ib.bind(cmd);
+                        ib.draw(cmd);
                     }
                 };
-                unsafe {
-                    context
-                        .draw(record_draw_commands)
-                        .inspect_err(|e| tracing::error!("{e}"))?;
-                }
+
+                unsafe { context.draw(record_draw_commands) }?;
+
                 window.request_redraw();
             }
             WindowEvent::KeyboardInput { event, .. } => {
@@ -555,7 +591,6 @@ impl Application {
                             }
                             KeyCode::KeyE => {
                                 if let ApplicationState::CameraMode = self.state {
-                                    // TODO: This part is wrong. Fix it.
                                     camera.move_local(WORLD_FORWARDS.scaled(SPEED));
                                 }
                             }
@@ -676,6 +711,16 @@ impl ApplicationHandler for Application {
                 return self.exiting(event_loop);
             }
         };
+
+        let window_id = window.id();
+
+        let context = match self.renderer.create_render_context(&window) {
+            Ok(context) => context,
+            Err(e) => {
+                tracing::error!("{}", e);
+                return self.exiting(event_loop);
+            }
+        };
         let camera = {
             let s = window.inner_size();
             let (w, h) = (s.width as f32, s.height as f32);
@@ -686,55 +731,28 @@ impl ApplicationHandler for Application {
                 aspect_ratio,
                 self.model_transform
                     .position
-                    .add(Vec3::ZERO.sub(WORLD_FORWARDS).add(WORLD_UP.scaled(0.5))),
+                    .add(Vec3::ZERO.sub(WORLD_FORWARDS)),
                 WORLD_FORWARDS,
             )
         };
-        // camera.look_at(self.model_transform.position);
-        let window_id = window.id();
 
         let camera_ubo = renderer::CameraUBO {
             view: camera.get_view_matrix().into_2d_arr(),
             proj: camera.get_projection_matrix().into_2d_arr(),
-            ..Default::default()
         };
-        let mesh_ubos = [
-            (
-                renderer::MeshUBO {
-                    model: self.plane_transform.as_mat4().into_2d_arr(),
-                    base_color: self.plane_base_color.into_arr(),
-                    flags: self.plane_flags,
-                },
-                renderer::MaterialUBO { texture_index: 0 },
-            ),
-            (
-                renderer::MeshUBO {
-                    model: self.model_transform.as_mat4().into_2d_arr(),
-                    base_color: self.model_base_color.into_arr(),
-                    flags: self.model_flags,
-                },
-                renderer::MaterialUBO { texture_index: 0 },
-            ),
-        ];
-        let light_ubo = renderer::GlobalLightUBO {
-            direction: self.global_light_direction.into_arr(),
-            color: self.global_light_color.into_arr(),
-            ambient: self.global_ambient_light,
-            ..Default::default()
-        };
-        let context = match self.renderer.create_render_context(
-            &camera_ubo,
-            &mesh_ubos,
-            &light_ubo,
-            &window,
-            self.images.clone(),
-        ) {
-            Ok(context) => context,
-            Err(e) => {
-                tracing::error!("{}", e);
-                return self.exiting(event_loop);
-            }
-        };
+        context
+            .update_camera(camera_ubo)
+            .inspect_err(|e| tracing::error!("{e}"))
+            .unwrap();
+
+        self.renderer
+            .update_world_light(
+                self.global_ambient_light,
+                self.global_light_direction,
+                self.global_light_color,
+            )
+            .unwrap();
+
         self.windows.insert(window_id, (context, window, camera));
     }
 
@@ -834,7 +852,7 @@ fn main() -> Result<()> {
             std::env::current_exe()?.file_name().unwrap().display()
         );
         println!(
-            "Invalid program arguments. Usage: {} <model> <options>",
+            "Invalid program arguments. Usage: {} <options> <model>",
             name
         );
         println!("To view all options type {} --help", name);
