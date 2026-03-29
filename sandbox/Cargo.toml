@@ -1,12 +1,12 @@
 [package]
-name = "dlk-objviewer"
+name = "dlk-model-viewer"
 version = "0.1.0"
 edition = "2024"
 authors = ["Devin Kern"]
 license = "Apache-2.0"
 description = "A program that displays Wavefront .obj files."
-homepage = "https://github.com/DevinLKern/dlk-gamedev"
-repository = "https://github.com/DevinLKern/dlk-gamedev"
+homepage = "https://github.com/DevinLKern/dlk-model-viewer"
+repository = "https://github.com/DevinLKern/dlk-model-viewer"
 # readme = ""
 # documentation = ""
 
