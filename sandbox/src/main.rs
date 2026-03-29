@@ -800,6 +800,34 @@ impl ApplicationHandler for Application {
                         let qy = Quat::unit_from_angle_axis(dy as f32, WORLD_RIGHT);
 
                         self.model_transform.rotate_local(qx.mul(qy));
+
+                        for (i, (_, _, idx)) in self.draw_infos.iter().enumerate().skip(1) {
+                            let src = renderer::MeshUBO {
+                                model: self.model_transform.as_mat4().into_2d_arr(),
+                                material_index: *idx,
+                            };
+                            unsafe {
+                                let offset =
+                                    i as u64 * self.renderer.model_transform_buffer_element_size;
+                                let dst = self
+                                    .renderer
+                                    .model_transform_buffer
+                                    .map_memory(
+                                        offset,
+                                        self.renderer.model_transform_buffer_element_size,
+                                    )
+                                    .inspect_err(|e| tracing::error!("{e}"))
+                                    .unwrap();
+
+                                std::ptr::copy_nonoverlapping(
+                                    &src,
+                                    dst as *mut renderer::MeshUBO,
+                                    1,
+                                );
+
+                                self.renderer.model_transform_buffer.unmap();
+                            }
+                        }
                     }
                     _ => {
                         // tracing::info!("Not implemented")
